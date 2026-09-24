@@ -106,6 +106,9 @@
   #archive .t.was-done { text-decoration: line-through; color: var(--pencil); }
   #archive .close { float: right; }
 
+  #bar #status.linked { color: #47663f; }
+  #bar #status.alert  { color: var(--accent); }
+
   #file { display: none; }
   @media (max-width: 700px) {
     .note { font-size: 17px; max-width: 26ch; }
@@ -129,6 +132,7 @@
 </div>
 
 <div id="bar">
+  <button id="status" title="storage status">&hellip;</button>
   <button id="btn-fresh" title="archive crossed-out tasks, keep the rest">fresh sheet</button>
   <button id="btn-archive">old sheets</button>
   <button id="btn-export">export</button>
@@ -161,7 +165,216 @@ function load() {
   } catch (e) { console.warn("load failed", e); }
   return { tasks: [], archive: [] };
 }
-function save() { localStorage.setItem(LS_KEY, JSON.stringify(state)); }
+function save() {
+  state.savedAt = Date.now();
+  localStorage.setItem(LS_KEY, JSON.stringify(state));
+  scheduleFileWrite();
+}
+
+/* ---------- file-based storage ----------
+   priority: 1) eisenpaper server HTTP backend (works in any browser, incl. Firefox)
+             2) File System Access API (Chromium only)
+             3) localStorage only.
+   the sheet lives in tasks.json; localStorage stays as cache/fallback.
+   newer `savedAt` wins on reconnect. */
+const HAS_FS = "showSaveFilePicker" in window;
+const statusEl = document.getElementById("status");
+let transport = null;      // "http" | "fsapi" | null
+let fileHandle = null;
+let lastFileText = null;   // last text known to be in the file/server
+let writeTimer = null;
+let fsState = HAS_FS ? "unlinked" : "nofs";
+
+function setStatus(s) {
+  if (s) fsState = s;
+  statusEl.classList.remove("linked", "alert");
+  const name = transport === "http" ? "tasks.json" : (fileHandle ? fileHandle.name : "file");
+  switch (fsState) {
+    case "nofs":
+      statusEl.textContent = "browser only";
+      statusEl.title = "no direct file access in this browser — run the eisenpaper server in the project folder and open http://localhost:8741 for file storage; until then data lives in localStorage (export/import to move it)";
+      break;
+    case "unlinked":
+      statusEl.textContent = "link file";
+      statusEl.classList.add("alert");
+      statusEl.title = "data lives only in this browser — click to store the sheet in a tasks.json you choose";
+      break;
+    case "linked":
+      statusEl.textContent = "\u2713 " + name;
+      statusEl.classList.add("linked");
+      statusEl.title = "sheet is stored in " + name + " — click to re-sync";
+      break;
+    case "reconnect":
+      statusEl.textContent = "reconnect " + name;
+      statusEl.classList.add("alert");
+      statusEl.title = "click to re-grant access to the linked file";
+      break;
+    case "error":
+      statusEl.textContent = "write failed!";
+      statusEl.classList.add("alert");
+      statusEl.title = "could not write the linked file — check it still exists";
+      break;
+  }
+}
+
+function idbKV(mode, fn) {
+  return new Promise((resolve, reject) => {
+    const open = indexedDB.open("eisenpaper", 1);
+    open.onupgradeneeded = () => open.result.createObjectStore("kv");
+    open.onerror = () => reject(open.error);
+    open.onsuccess = () => {
+      const tx = open.result.transaction("kv", mode);
+      const req = fn(tx.objectStore("kv"));
+      tx.oncomplete = () => { open.result.close(); resolve(req.result); };
+      tx.onerror = () => reject(tx.error);
+    };
+  });
+}
+const idbGet = k => idbKV("readonly", s => s.get(k));
+const idbSet = (k, v) => idbKV("readwrite", s => s.put(v, k));
+
+async function writeFile() {
+  if (!transport || fsState === "reconnect") return;
+  const text = JSON.stringify(state, null, 2);
+  if (text === lastFileText) return;
+  if (transport === "http") {
+    const res = await fetch("tasks.json", { method: "PUT", headers: { "content-type": "application/json" }, body: text });
+    if (!res.ok) throw new Error("PUT failed: " + res.status);
+  } else {
+    const w = await fileHandle.createWritable();
+    await w.write(text);
+    await w.close();
+  }
+  lastFileText = text;
+}
+
+function scheduleFileWrite() {
+  if (fsState !== "linked") return;
+  clearTimeout(writeTimer);
+  writeTimer = setTimeout(() => {
+    writeTimer = null;
+    writeFile().then(() => setStatus("linked"))
+      .catch(e => { console.warn("file write failed", e); setStatus("error"); });
+  }, 300);
+}
+
+// adopt the file's content unless it's older than what we have
+async function readFile() {
+  if (editing) return;                       // never yank a note mid-edit
+  let text;
+  if (transport === "http") {
+    const res = await fetch("tasks.json", { cache: "no-store" });
+    if (res.status === 404) return;          // nothing saved yet
+    if (!res.ok) throw new Error("GET failed: " + res.status);
+    text = await res.text();
+  } else {
+    text = await (await fileHandle.getFile()).text();
+  }
+  if (text === lastFileText) return;
+  try {
+    const s = JSON.parse(text);
+    if (!Array.isArray(s.tasks) || !Array.isArray(s.archive)) throw new Error("not an eisenpaper sheet");
+    if ((s.savedAt || 0) >= (state.savedAt || 0)) {
+      state = s;
+      lastFileText = text;
+      localStorage.setItem(LS_KEY, JSON.stringify(state));
+      render();
+    } else {
+      lastFileText = text;                   // file is older — push our version
+      scheduleFileWrite();
+    }
+  } catch (e) { console.warn("linked file unreadable — keeping current sheet", e); }
+}
+
+async function linkFile() {
+  try {
+    const h = await showSaveFilePicker({
+      suggestedName: "tasks.json",
+      types: [{ description: "eisenpaper sheet", accept: { "application/json": [".json"] } }]
+    });
+    fileHandle = h;
+    transport = "fsapi";
+    fsState = "linked";
+    await idbSet("fileHandle", h).catch(() => {});
+    // if the picked file already holds a sheet, offer to load it
+    const text = await (await h.getFile()).text();
+    let adopted = false;
+    if (text.trim()) {
+      try {
+        const s = JSON.parse(text);
+        if (Array.isArray(s.tasks) && Array.isArray(s.archive)) {
+          const empty = !state.tasks.length && !state.archive.length;
+          if (empty || confirm(`"${h.name}" already holds ${s.tasks.length} task(s). load it? (cancel = overwrite it with the current sheet)`)) {
+            state = s;
+            lastFileText = text;
+            localStorage.setItem(LS_KEY, JSON.stringify(state));
+            render();
+            adopted = true;
+          }
+        }
+      } catch {}
+    }
+    if (!adopted) { lastFileText = null; await writeFile(); }
+    setStatus();
+  } catch (e) {
+    if (e.name !== "AbortError") alert("linking failed: " + e.message);
+  }
+}
+
+async function reconnect() {
+  try {
+    if (await fileHandle.requestPermission({ mode: "readwrite" }) === "granted") {
+      fsState = "linked";
+      await readFile();
+    }
+  } catch (e) { console.warn(e); }
+  setStatus();
+}
+
+statusEl.addEventListener("click", () => {
+  if (fsState === "nofs") { alert(statusEl.title); return; }
+  if (fsState === "unlinked") linkFile();
+  else if (fsState === "reconnect") reconnect();
+  else readFile().then(() => setStatus()).catch(() => {});   // linked → manual re-sync
+});
+
+async function initFile() {
+  setStatus();
+  // 1) served by the eisenpaper server? → plain fetch transport, any browser
+  if (location.protocol === "http:" || location.protocol === "https:") {
+    try {
+      const res = await fetch("tasks.json", { cache: "no-store" });
+      if (res.headers.has("x-eisenpaper")) {
+        transport = "http";
+        fsState = "linked";
+        await readFile();
+        setStatus();
+        return;
+      }
+    } catch {}
+  }
+  // 2) Chromium: FS Access handle from a previous session
+  if (!HAS_FS) return;
+  try { fileHandle = (await idbGet("fileHandle")) || null; } catch {}
+  if (!fileHandle) return;
+  transport = "fsapi";
+  try {
+    const perm = await fileHandle.queryPermission({ mode: "readwrite" });
+    if (perm === "granted") { fsState = "linked"; await readFile(); }
+    else fsState = "reconnect";
+  } catch { fsState = "reconnect"; }
+  setStatus();
+}
+
+// pick up external edits (Syncthing, another device) when coming back
+addEventListener("focus", () => { if (fsState === "linked") readFile().catch(() => {}); });
+// flush a pending write when the tab goes to background
+document.addEventListener("visibilitychange", () => {
+  if (document.visibilityState === "hidden" && writeTimer) {
+    clearTimeout(writeTimer); writeTimer = null;
+    writeFile().catch(() => {});
+  }
+});
 
 const uid = () => Date.now().toString(36) + Math.random().toString(36).slice(2, 7);
 // stable pseudo-random rotation per task, like a scrap laid on the desk
@@ -371,6 +584,7 @@ fileInput.addEventListener("change", async () => {
 });
 
 render();
+initFile();
 </script>
 </body>
 </html>
