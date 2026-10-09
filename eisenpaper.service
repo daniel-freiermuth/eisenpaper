@@ -1,18 +1,17 @@
-# eisenpaper as a background fixture (systemd user service)
+# eisenpaper as an always-on systemd user service.
 #
-# install:
-#   cp eisenpaper.service ~/.config/systemd/user/
-#   systemctl --user enable --now eisenpaper
+# install (fills in @PROJECT_DIR@ for this checkout):
+#   just install-service
 # then the sheet is always at http://localhost:8741
 #
-# after `cargo build --release` in the project folder.
-# for phone access on the LAN, add:  --host 0.0.0.0
+# for phone access on the LAN, append  --host 0.0.0.0  to ExecStart.
 
 [Unit]
 Description=eisenpaper task sheet
 
 [Service]
-ExecStart=<eisenpaper-proj-dir>/target/release/eisenpaper --dir <eisenpaper-proj-dir>
+WorkingDirectory=@PROJECT_DIR@
+ExecStart=@PROJECT_DIR@/target/release/eisenpaper --web web/dist --data tasks.json
 Restart=on-failure
 
 [Install]

@@ -1,8 +1,11 @@
 [package]
 name = "eisenpaper"
 version = "0.1.0"
-edition = "2021"
+edition = "2024"
+rust-version = "1.85"
 description = "serves the eisenpaper sheet and owns tasks.json"
+repository = "https://github.com/daniel-freiermuth/eisenpaper"
+publish = false
 
 [dependencies]
 tiny_http = "0.12"
@@ -11,3 +14,52 @@ serde_json = "1"
 [profile.release]
 strip = true
 lto = true
+codegen-units = 1
+
+[lints.rust]
+unsafe_code = "forbid"
+missing_docs = "deny"
+unreachable_pub = "deny"
+unused_qualifications = "deny"
+unused_results = "deny"
+let_underscore_drop = "deny"
+trivial_casts = "deny"
+trivial_numeric_casts = "deny"
+unused_lifetimes = "deny"
+single_use_lifetimes = "deny"
+
+[lints.clippy]
+all = { level = "deny", priority = -1 }
+pedantic = { level = "deny", priority = -1 }
+nursery = { level = "deny", priority = -1 }
+cargo = { level = "deny", priority = -1 }
+# transitive duplicates are outside this crate's control
+multiple_crate_versions = "allow"
+# selected restriction lints
+allow_attributes = "deny"
+allow_attributes_without_reason = "deny"
+dbg_macro = "deny"
+expect_used = "deny"
+unwrap_used = "deny"
+panic = "deny"
+todo = "deny"
+unimplemented = "deny"
+indexing_slicing = "deny"
+string_slice = "deny"
+as_conversions = "deny"
+clone_on_ref_ptr = "deny"
+create_dir = "deny"
+exit = "deny"
+filetype_is_file = "deny"
+if_then_some_else_none = "deny"
+missing_docs_in_private_items = "deny"
+rc_buffer = "deny"
+rest_pat_in_fully_bound_structs = "deny"
+same_name_method = "deny"
+semicolon_outside_block = "deny"
+str_to_string = "deny"
+tests_outside_test_module = "deny"
+undocumented_unsafe_blocks = "deny"
+unnecessary_self_imports = "deny"
+unneeded_field_pattern = "deny"
+verbose_file_reads = "deny"

@@ -1,0 +1,56 @@
+:root {
+  --paper: #f6f1e3;
+  --ink: #2b2a26;
+  --pencil: #8a8578;
+  --faint: #b9b29e;
+  --accent: #b03a2e;
+  --ok: #47663f;
+  --highlight: rgb(255 249 196);
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html,
+body {
+  height: 100%;
+  margin: 0;
+  overflow: hidden;
+}
+
+body {
+  background:
+    radial-gradient(
+      ellipse at 20% 10%,
+      rgb(255 255 255 / 50%),
+      transparent 60%
+    ),
+    repeating-linear-gradient(
+      0deg,
+      transparent 0 27px,
+      rgb(138 133 120 / 5.5%) 27px 28px
+    ),
+    var(--paper);
+  color: var(--ink);
+  font-family:
+    "Patrick Hand", "Segoe Print", "Bradley Hand", "Comic Neue",
+    "Comic Sans MS", cursive;
+  user-select: none;
+  touch-action: none;
+}
+
+button {
+  font: inherit;
+  font-size: 14px;
+  color: var(--ink);
+  background: rgb(255 255 255 / 60%);
+  border: 1px solid var(--faint);
+  border-radius: 4px;
+  padding: 3px 10px;
+  cursor: pointer;
+}
+
+button:hover {
+  background: #fff;
+}

@@ -1,1 +1,7 @@
 /target
+/web/node_modules
+/web/dist
+# `just dev` sheet, kept away from the real one
+/dev-tasks.json
+# atomic-write temp files
+.*.json.tmp
