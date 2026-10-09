@@ -15,7 +15,14 @@
   /** below this a press counts as a click, not a drag */
   const DRAG_THRESHOLD_PX = 6;
 
-  let press: { x: number; y: number; moved: boolean } | null = null;
+  /** pointer and card position at press time; the card moves by the pointer's delta */
+  let press: {
+    x: number;
+    y: number;
+    taskX: number;
+    taskY: number;
+    moved: boolean;
+  } | null = null;
   let dragging = $state(false);
   let clickTimer: number | undefined;
   let cancelled = false;
@@ -33,7 +40,13 @@
 
   function onpointerdown(e: PointerEvent): void {
     if (e.button !== 0 || editing) return;
-    press = { x: e.clientX, y: e.clientY, moved: false };
+    press = {
+      x: e.clientX,
+      y: e.clientY,
+      taskX: task.x,
+      taskY: task.y,
+      moved: false,
+    };
     (e.currentTarget as HTMLElement).setPointerCapture(e.pointerId);
   }
 
@@ -46,7 +59,11 @@
       return;
     press.moved = true;
     dragging = true;
-    store.move(task, e.clientX / innerWidth, e.clientY / innerHeight);
+    store.move(
+      task,
+      press.taskX + (e.clientX - press.x) / innerWidth,
+      press.taskY + (e.clientY - press.y) / innerHeight,
+    );
   }
 
   function onpointerup(): void {
