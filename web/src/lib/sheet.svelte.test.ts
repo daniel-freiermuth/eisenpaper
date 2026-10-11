@@ -35,7 +35,7 @@ const reply = (status: number, body = ""): Response =>
 /** GET serves `serverText`; PUT answers with `putStatus`. */
 const server =
   (putStatus: number) =>
-  (_url: string, init?: RequestInit): Promise<Response> =>
+  (_url: string | URL | Request, init?: RequestInit): Promise<Response> =>
     Promise.resolve(
       init?.method === "PUT" ? reply(putStatus) : reply(200, serverText),
     );
