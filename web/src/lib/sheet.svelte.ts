@@ -104,7 +104,9 @@ class SheetStore {
     }
     const text = await res.text();
     if (text === this.#lastServerText) {
-      this.status = "synced";
+      // server unchanged since our last sync: push any local edits whose
+      // save failed (#write reports "synced" when there are none)
+      await this.#write();
       return;
     }
     const remote = parseSheet(text);
