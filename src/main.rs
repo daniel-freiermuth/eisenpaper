@@ -4,16 +4,28 @@
 //! atomically. Every other `GET` is a file from the web directory.
 
 use std::fs;
-use std::io::{self, Read};
+use std::io;
 use std::path::{Path, PathBuf};
 use std::process::ExitCode;
+use std::sync::Arc;
 
-use tiny_http::{Header, Method, Request, Response, ResponseBox, Server};
+use axum::Router;
+use axum::body::Bytes;
+use axum::extract::rejection::BytesRejection;
+use axum::extract::{DefaultBodyLimit, State};
+use axum::http::header::{CACHE_CONTROL, CONTENT_TYPE};
+use axum::http::{HeaderName, HeaderValue, StatusCode, Uri};
+use axum::response::{IntoResponse, Response};
+use axum::routing::get;
+use tokio::net::TcpListener;
 
 /// Marker header: tells the app this origin accepts `PUT /tasks.json`.
-const MARKER: (&str, &str) = ("X-Eisenpaper", "1");
+const MARKER: (HeaderName, HeaderValue) = (
+    HeaderName::from_static("x-eisenpaper"),
+    HeaderValue::from_static("1"),
+);
 /// Upper bound for an uploaded sheet; far above any real one.
-const MAX_SHEET_BYTES: u64 = 16 * 1024 * 1024;
+const MAX_SHEET_BYTES: usize = 16 * 1024 * 1024;
 
 /// Help text for `--help` and argument errors.
 const USAGE: &str = "\
@@ -78,15 +90,6 @@ fn parse_args(args: impl IntoIterator<Item = String>) -> Result<Cli, String> {
     Ok(Cli::Run(cfg))
 }
 
-/// Builds a header from static ASCII parts.
-fn header(name: &str, value: &str) -> Header {
-    #[expect(
-        clippy::expect_used,
-        reason = "only called with static ASCII names and values, which always parse"
-    )]
-    Header::from_bytes(name.as_bytes(), value.as_bytes()).expect("valid static header")
-}
-
 /// Maps a URL path to a file under `web`, or `None` if it may not be served.
 ///
 /// Rejects every segment that is empty or starts with a dot, which rules out
@@ -122,19 +125,19 @@ fn content_type(path: &Path) -> &'static str {
 }
 
 /// Serves a static file, following symlinks only if they stay inside `web`.
-fn serve_static(web: &Path, url_path: &str) -> ResponseBox {
+fn serve_static(web: &Path, url_path: &str) -> Response {
     let Some(path) = resolve_static(web, url_path) else {
-        return Response::empty(404).boxed();
+        return StatusCode::NOT_FOUND.into_response();
     };
     let inside = match (path.canonicalize(), web.canonicalize()) {
         (Ok(file), Ok(root)) => file.starts_with(root),
         _ => false,
     };
     if !inside {
-        return Response::empty(404).boxed();
+        return StatusCode::NOT_FOUND.into_response();
     }
     let Ok(data) = fs::read(&path) else {
-        return Response::empty(404).boxed();
+        return StatusCode::NOT_FOUND.into_response();
     };
     // Vite fingerprints everything under /assets/, so it can be cached forever
     let cache = if url_path.starts_with("/assets/") {
@@ -142,23 +145,35 @@ fn serve_static(web: &Path, url_path: &str) -> ResponseBox {
     } else {
         "no-cache"
     };
-    Response::from_data(data)
-        .with_header(header("Content-Type", content_type(&path)))
-        .with_header(header("Cache-Control", cache))
-        .boxed()
+    (
+        [
+            (CONTENT_TYPE, HeaderValue::from_static(content_type(&path))),
+            (CACHE_CONTROL, HeaderValue::from_static(cache)),
+        ],
+        data,
+    )
+        .into_response()
+}
+
+/// Every other `GET`: a file from the web directory.
+async fn get_static(State(cfg): State<Arc<Config>>, uri: Uri) -> Response {
+    serve_static(&cfg.web, uri.path())
 }
 
 /// `GET /tasks.json`: the sheet, or a marked 404 so the app knows it may PUT.
-fn get_sheet(data: &Path) -> ResponseBox {
-    let marker = header(MARKER.0, MARKER.1);
-    match fs::read(data) {
-        Ok(bytes) => Response::from_data(bytes)
-            .with_header(marker)
-            .with_header(header("Content-Type", "application/json"))
-            .with_header(header("Cache-Control", "no-store"))
-            .boxed(),
-        Err(_) => Response::empty(404).with_header(marker).boxed(),
-    }
+async fn get_sheet(State(cfg): State<Arc<Config>>) -> Response {
+    let Ok(bytes) = fs::read(&cfg.data) else {
+        return (StatusCode::NOT_FOUND, [MARKER]).into_response();
+    };
+    (
+        [
+            MARKER,
+            (CONTENT_TYPE, HeaderValue::from_static("application/json")),
+            (CACHE_CONTROL, HeaderValue::from_static("no-store")),
+        ],
+        bytes,
+    )
+        .into_response()
 }
 
 /// Why a sheet upload was refused.
@@ -191,45 +206,42 @@ fn write_sheet(data: &Path, body: &[u8]) -> Result<(), PutError> {
     })
 }
 
-/// `PUT /tasks.json`: reads a bounded body and stores it.
-fn put_sheet(data: &Path, req: &mut Request) -> ResponseBox {
-    let mut body = Vec::new();
-    let read = req
-        .as_reader()
-        .take(MAX_SHEET_BYTES + 1)
-        .read_to_end(&mut body);
-    let status = match read {
-        Err(_) => 400,
-        Ok(n) if u64::try_from(n).map_or(true, |n| n > MAX_SHEET_BYTES) => 413,
-        Ok(_) => match write_sheet(data, &body) {
-            Ok(()) => 204,
-            Err(PutError::InvalidJson) => 400,
+/// `PUT /tasks.json`: stores a body of at most [`MAX_SHEET_BYTES`].
+async fn put_sheet(
+    State(cfg): State<Arc<Config>>,
+    body: Result<Bytes, BytesRejection>,
+) -> Response {
+    let status = match body {
+        // 413 past the body limit, 400 if the body could not be read
+        Err(rejection) => rejection.status(),
+        Ok(body) => match write_sheet(&cfg.data, &body) {
+            Ok(()) => StatusCode::NO_CONTENT,
+            Err(PutError::InvalidJson) => StatusCode::BAD_REQUEST,
             Err(PutError::Io(e)) => {
-                eprintln!("writing {} failed: {e}", data.display());
-                500
+                eprintln!("writing {} failed: {e}", cfg.data.display());
+                StatusCode::INTERNAL_SERVER_ERROR
             }
         },
     };
-    Response::empty(status)
-        .with_header(header(MARKER.0, MARKER.1))
-        .boxed()
+    (status, [MARKER]).into_response()
 }
 
-/// Routes one request.
-fn handle(cfg: &Config, mut req: Request) {
-    let path = req.url().split('?').next().unwrap_or("/").to_owned();
-    let response = match (req.method(), path.as_str()) {
-        (Method::Get, "/tasks.json") => get_sheet(&cfg.data),
-        (Method::Put, "/tasks.json") => put_sheet(&cfg.data, &mut req),
-        (Method::Get, _) => serve_static(&cfg.web, &path),
-        _ => Response::empty(405).boxed(),
-    };
-    if let Err(e) = req.respond(response) {
-        eprintln!("response failed: {e}");
-    }
+/// The routes; any other method gets a 405.
+///
+/// Handlers do their file I/O synchronously: the files are local and small,
+/// and on the single-threaded runtime (see `main`) it keeps two uploads from
+/// interleaving inside `write_sheet`, which reuses one temp file name.
+fn app(cfg: Arc<Config>) -> Router {
+    Router::new()
+        .route("/tasks.json", get(get_sheet).put(put_sheet))
+        .fallback(get(get_static))
+        .layer(DefaultBodyLimit::max(MAX_SHEET_BYTES))
+        .with_state(cfg)
 }
 
-fn main() -> ExitCode {
+// one thread: connections are served concurrently, but handlers never run in parallel
+#[tokio::main(flavor = "current_thread")]
+async fn main() -> ExitCode {
     let cfg = match parse_args(std::env::args().skip(1)) {
         Ok(Cli::Run(cfg)) => cfg,
         Ok(Cli::Help) => {
@@ -247,8 +259,8 @@ fn main() -> ExitCode {
             cfg.web.display()
         );
     }
-    let server = match Server::http((cfg.host.as_str(), cfg.port)) {
-        Ok(server) => server,
+    let listener = match TcpListener::bind((cfg.host.as_str(), cfg.port)).await {
+        Ok(listener) => listener,
         Err(e) => {
             eprintln!("cannot bind {}:{}: {e}", cfg.host, cfg.port);
             return ExitCode::FAILURE;
@@ -264,8 +276,9 @@ fn main() -> ExitCode {
         cfg.port,
         cfg.data.display()
     );
-    for req in server.incoming_requests() {
-        handle(&cfg, req);
+    if let Err(e) = axum::serve(listener, app(Arc::new(cfg))).await {
+        eprintln!("server failed: {e}");
+        return ExitCode::FAILURE;
     }
     ExitCode::SUCCESS
 }
@@ -273,6 +286,9 @@ fn main() -> ExitCode {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use axum::body::{Body, to_bytes};
+    use axum::http::Request;
+    use tower::ServiceExt;
 
     /// A fresh, empty directory per test.
     fn scratch(name: &str) -> PathBuf {
@@ -285,6 +301,29 @@ mod tests {
 
     fn args(list: &[&str]) -> Result<Cli, String> {
         parse_args(list.iter().map(|s| (*s).to_owned()))
+    }
+
+    /// The full router over a scratch directory, plus its sheet path.
+    fn scratch_app(name: &str) -> (Router, PathBuf) {
+        let dir = scratch(name);
+        let data = dir.join("tasks.json");
+        let cfg = Config {
+            host: "127.0.0.1".to_owned(),
+            port: 0,
+            web: dir.join("web"),
+            data: data.clone(),
+        };
+        (app(Arc::new(cfg)), data)
+    }
+
+    /// Sends one request through the router.
+    async fn call(app: &Router, method: &str, uri: &str, body: Vec<u8>) -> Response {
+        let req = Request::builder()
+            .method(method)
+            .uri(uri)
+            .body(Body::from(body))
+            .unwrap();
+        app.clone().oneshot(req).await.unwrap()
     }
 
     #[test]
@@ -324,7 +363,10 @@ mod tests {
         fs::create_dir_all(&web).unwrap();
         fs::write(dir.join("secret.txt"), "private").unwrap();
         std::os::unix::fs::symlink(dir.join("secret.txt"), web.join("leak.txt")).unwrap();
-        assert_eq!(serve_static(&web, "/leak.txt").status_code().0, 404);
+        assert_eq!(
+            serve_static(&web, "/leak.txt").status(),
+            StatusCode::NOT_FOUND
+        );
     }
 
     #[test]
@@ -352,6 +394,41 @@ mod tests {
             .filter(|n| n != "tasks.json")
             .collect();
         assert!(leftovers.is_empty(), "stray files: {leftovers:?}");
+    }
+
+    #[tokio::test]
+    async fn sheet_responses_carry_the_marker_the_app_looks_for() {
+        let (app, _) = scratch_app("marker");
+        // no sheet yet: a marked 404 tells the app to create one
+        let res = call(&app, "GET", "/tasks.json", Vec::new()).await;
+        assert_eq!(res.status(), StatusCode::NOT_FOUND);
+        assert_eq!(res.headers()["x-eisenpaper"], "1");
+        let sheet = br#"{"tasks":[],"archive":[]}"#;
+        let res = call(&app, "PUT", "/tasks.json", sheet.to_vec()).await;
+        assert_eq!(res.status(), StatusCode::NO_CONTENT);
+        assert_eq!(res.headers()["x-eisenpaper"], "1");
+        let res = call(&app, "GET", "/tasks.json?t=1", Vec::new()).await;
+        assert_eq!(res.status(), StatusCode::OK);
+        assert_eq!(res.headers()["x-eisenpaper"], "1");
+        assert_eq!(res.headers()["cache-control"], "no-store");
+        let body = to_bytes(res.into_body(), usize::MAX).await.unwrap();
+        assert_eq!(body, &sheet[..]);
+    }
+
+    #[tokio::test]
+    async fn put_accepts_max_sheet_bytes_and_refuses_one_more() {
+        let (app, data) = scratch_app("limit");
+        // a JSON string of exactly the limit, far above axum's 2 MiB default
+        let mut sheet = vec![b'x'; MAX_SHEET_BYTES];
+        sheet[0] = b'"';
+        sheet[MAX_SHEET_BYTES - 1] = b'"';
+        let res = call(&app, "PUT", "/tasks.json", sheet.clone()).await;
+        assert_eq!(res.status(), StatusCode::NO_CONTENT);
+        sheet.insert(1, b'x');
+        let res = call(&app, "PUT", "/tasks.json", sheet).await;
+        assert_eq!(res.status(), StatusCode::PAYLOAD_TOO_LARGE);
+        assert_eq!(res.headers()["x-eisenpaper"], "1");
+        assert_eq!(fs::read(&data).unwrap().len(), MAX_SHEET_BYTES);
     }
 
     #[test]

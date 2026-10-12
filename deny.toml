@@ -7,6 +7,13 @@ yanked = "deny"
 [licenses]
 allow = ["MIT", "Apache-2.0"]
 confidence-threshold = 0.9
+# scoped, so no other crate can bring these licenses in unnoticed
+exceptions = [
+  # axum's router, partly derived from httprouter: MIT AND BSD-3-Clause
+  { crate = "matchit", allow = ["BSD-3-Clause"] },
+  # compile-time only (proc-macro2 for tokio-macros): (MIT OR Apache-2.0) AND Unicode-3.0
+  { crate = "unicode-ident", allow = ["Unicode-3.0"] },
+]
 
 [licenses.private]
 ignore = true
