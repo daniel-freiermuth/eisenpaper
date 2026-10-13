@@ -10,15 +10,15 @@ use std::process::ExitCode;
 use std::sync::Arc;
 use std::time::Duration;
 
-use axum::Router;
 use axum::body::Bytes;
-use axum::extract::rejection::BytesRejection;
-use axum::extract::{DefaultBodyLimit, State};
+use axum::extract::{DefaultBodyLimit, FromRequest, Request, State};
 use axum::http::header::{CACHE_CONTROL, CONTENT_TYPE};
 use axum::http::{HeaderName, HeaderValue, StatusCode, Uri};
 use axum::response::{IntoResponse, Response};
 use axum::routing::get;
+use axum::{Extension, Router};
 use tokio::net::TcpListener;
+use tokio::sync::Semaphore;
 
 /// Marker header: tells the app this origin accepts `PUT /tasks.json`.
 const MARKER: (HeaderName, HeaderValue) = (
@@ -30,8 +30,9 @@ const MAX_SHEET_BYTES: usize = 16 * 1024 * 1024;
 /// Uploads whose bodies may be read at once; each buffers up to
 /// [`MAX_SHEET_BYTES`], so this bounds the memory uploads can pin.
 const MAX_UPLOADS: usize = 2;
-/// How long reading one upload body may take before it is refused with 408,
-/// so a stalled client cannot pin its buffer (and an upload slot) forever.
+/// How long an upload may wait for a slot and send its body before it is
+/// refused with 408, so stalled clients cannot pin a buffer or a slot (nor
+/// keep a queued upload waiting) for longer than this.
 const BODY_TIMEOUT: Duration = Duration::from_secs(30);
 
 /// Help text for `--help` and argument errors.
@@ -223,15 +224,29 @@ fn write_sheet(data: &Path, body: &[u8]) -> Result<(), PutError> {
     })
 }
 
-/// `PUT /tasks.json`: stores a body of at most [`MAX_SHEET_BYTES`].
+/// `PUT /tasks.json`: stores a body of at most [`MAX_SHEET_BYTES`], read
+/// while holding one of the [`MAX_UPLOADS`] slots, all within [`BODY_TIMEOUT`].
 async fn put_sheet(
     State(cfg): State<Arc<Config>>,
-    body: Result<Bytes, BytesRejection>,
+    Extension(uploads): Extension<Arc<Semaphore>>,
+    request: Request,
 ) -> Response {
-    let status = match body {
+    let upload = async {
+        // the semaphore is never closed, so this only waits for a free slot
+        let Ok(slot) = uploads.acquire().await else {
+            return Err(StatusCode::INTERNAL_SERVER_ERROR);
+        };
         // 413 past the body limit, 400 if the body could not be read
-        Err(rejection) => rejection.status(),
-        Ok(body) => match write_sheet(&cfg.data, &body) {
+        let body = Bytes::from_request(request, &())
+            .await
+            .map_err(|rejection| rejection.status())?;
+        Ok((slot, body))
+    };
+    let status = match tokio::time::timeout(BODY_TIMEOUT, upload).await {
+        Err(_elapsed) => StatusCode::REQUEST_TIMEOUT,
+        Ok(Err(status)) => status,
+        // the slot is held until the buffered body is written and dropped
+        Ok(Ok((_slot, body))) => match write_sheet(&cfg.data, &body) {
             Ok(()) => StatusCode::NO_CONTENT,
             Err(PutError::InvalidJson) => StatusCode::BAD_REQUEST,
             Err(PutError::Io(e)) => {
@@ -253,6 +268,7 @@ fn app(cfg: Arc<Config>) -> Router {
         .route("/tasks.json", get(get_sheet).put(put_sheet))
         .fallback(get(get_static))
         .layer(DefaultBodyLimit::max(MAX_SHEET_BYTES))
+        .layer(Extension(Arc::new(Semaphore::new(MAX_UPLOADS))))
         .with_state(cfg)
 }
 
@@ -437,6 +453,25 @@ mod tests {
         // its body was only read once a stalled upload gave up its slot
         assert!(start.elapsed() >= BODY_TIMEOUT);
         assert_eq!(fs::read_to_string(&data).unwrap(), "{}");
+        for conn in &mut stalled {
+            assert!(response(conn).await.starts_with("HTTP/1.1 408"));
+        }
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn put_waiting_for_a_slot_is_refused_within_body_timeout() {
+        let (server, _) = spawn_server("queued");
+        let mut stalled = Vec::new();
+        for _ in 0..MAX_UPLOADS {
+            stalled.push(send(&server, STALLED_PUT).await);
+        }
+        tokio::time::sleep(Duration::from_secs(1)).await;
+        let start = tokio::time::Instant::now();
+        let mut queued = send(&server, STALLED_PUT).await;
+        let res = response(&mut queued).await;
+        assert!(res.starts_with("HTTP/1.1 408"), "{res}");
+        // the wait for a slot counts: no fresh BODY_TIMEOUT once it gets one
+        assert!(start.elapsed() <= BODY_TIMEOUT);
         for conn in &mut stalled {
             assert!(response(conn).await.starts_with("HTTP/1.1 408"));
         }
