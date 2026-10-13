@@ -161,9 +161,19 @@ async fn get_static(State(cfg): State<Arc<Config>>, uri: Uri) -> Response {
 }
 
 /// `GET /tasks.json`: the sheet, or a marked 404 so the app knows it may PUT.
+///
+/// Only a missing file is a 404: any other read failure is a marked 500, so
+/// the app shows an error instead of creating a sheet over the existing one.
 async fn get_sheet(State(cfg): State<Arc<Config>>) -> Response {
-    let Ok(bytes) = fs::read(&cfg.data) else {
-        return (StatusCode::NOT_FOUND, [MARKER]).into_response();
+    let bytes = match fs::read(&cfg.data) {
+        Ok(bytes) => bytes,
+        Err(e) if e.kind() == io::ErrorKind::NotFound => {
+            return (StatusCode::NOT_FOUND, [MARKER]).into_response();
+        }
+        Err(e) => {
+            eprintln!("reading {} failed: {e}", cfg.data.display());
+            return (StatusCode::INTERNAL_SERVER_ERROR, [MARKER]).into_response();
+        }
     };
     (
         [
@@ -413,6 +423,16 @@ mod tests {
         assert_eq!(res.headers()["cache-control"], "no-store");
         let body = to_bytes(res.into_body(), usize::MAX).await.unwrap();
         assert_eq!(body, &sheet[..]);
+    }
+
+    #[tokio::test]
+    async fn unreadable_sheet_is_a_marked_500_not_a_404() {
+        let (app, data) = scratch_app("unreadable");
+        // the sheet exists but cannot be read; a 404 would make the app overwrite it
+        fs::create_dir_all(&data).unwrap();
+        let res = call(&app, "GET", "/tasks.json", Vec::new()).await;
+        assert_eq!(res.status(), StatusCode::INTERNAL_SERVER_ERROR);
+        assert_eq!(res.headers()["x-eisenpaper"], "1");
     }
 
     #[tokio::test]
