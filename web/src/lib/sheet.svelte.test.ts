@@ -309,4 +309,36 @@ describe("SheetStore.sync", () => {
       { tasks: [{ id: "t1" }, { text: "buy milk" }] },
     ]);
   });
+
+  it("does not yank a note whose edit began while the GET was in flight", async () => {
+    const store = await loadStore();
+    fetchMock.mockImplementation(server(204));
+    await store.sync();
+    const task = store.sheet.tasks[0];
+    if (task === undefined) throw new Error("server sheet not adopted");
+
+    let resolveGet: (res: Response) => void = () => undefined;
+    fetchMock.mockReset();
+    fetchMock.mockReturnValueOnce(
+      new Promise<Response>((resolve) => (resolveGet = resolve)),
+    );
+    const pending = store.sync();
+    store.startEdit(task);
+    resolveGet(
+      reply(200, JSON.stringify({ tasks: [], archive: [], savedAt: 20 })),
+    );
+    await pending;
+
+    expect(store.sheet.tasks.map((t) => t.id)).toContain("t1");
+    expect(store.editingId).toBe("t1");
+
+    // the newer sheet is adopted by the first sync after the edit ends
+    store.cancelEdit();
+    fetchMock.mockReset();
+    fetchMock.mockResolvedValue(
+      reply(200, JSON.stringify({ tasks: [], archive: [], savedAt: 20 })),
+    );
+    await store.sync();
+    expect(store.sheet.tasks).toEqual([]);
+  });
 });
