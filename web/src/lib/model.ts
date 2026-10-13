@@ -21,16 +21,33 @@ export const TaskSchema = v.looseObject({
 });
 export type Task = v.InferOutput<typeof TaskSchema>;
 
+/**
+ * The renderer keys its lists by these fields ({#each … (key)}) and Svelte
+ * throws on duplicate keys, so a sheet that repeats one must not be adopted.
+ */
+const uniqueBy = <T>(key: (item: T) => unknown) =>
+  v.check<T[], string>(
+    (items) => new Set(items.map(key)).size === items.length,
+    "duplicate key",
+  );
+const UniqueTasksSchema = v.pipe(
+  v.array(TaskSchema),
+  uniqueBy((t: Task) => t.id),
+);
+
 export const ArchivedSheetSchema = v.looseObject({
   at: v.number(),
-  tasks: v.array(TaskSchema),
+  tasks: UniqueTasksSchema,
 });
 export type ArchivedSheet = v.InferOutput<typeof ArchivedSheetSchema>;
 
 /** The whole persisted document — exactly what lives in tasks.json. */
 export const SheetSchema = v.looseObject({
-  tasks: v.array(TaskSchema),
-  archive: v.array(ArchivedSheetSchema),
+  tasks: UniqueTasksSchema,
+  archive: v.pipe(
+    v.array(ArchivedSheetSchema),
+    uniqueBy((a: ArchivedSheet) => a.at),
+  ),
   /** ms timestamp of the last local change; newer side wins on sync */
   savedAt: v.optional(v.number()),
 });
