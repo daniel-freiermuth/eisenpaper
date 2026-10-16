@@ -91,6 +91,7 @@
 
   function ondblclick(e: MouseEvent): void {
     e.stopPropagation(); // the pane would create a new note
+    if (editing) return; // a double-click in the text selects a word
     clearTimeout(clickTimer);
     store.startEdit(task);
   }
