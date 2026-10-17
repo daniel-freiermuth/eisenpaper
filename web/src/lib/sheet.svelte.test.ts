@@ -127,7 +127,10 @@ describe("SheetStore.sync", () => {
 
   it("retries a push that the server rejected", async () => {
     const store = await loadStore();
+    fetchMock.mockImplementation(server(204));
+    await store.sync();
     store.replace({ tasks: [], archive: [] }); // local edit, newer than the server
+    fetchMock.mockReset();
     fetchMock.mockImplementation(server(500));
     await store.sync();
     expect(store.status).toBe("error");
