@@ -17,6 +17,8 @@ use axum::http::header::{CACHE_CONTROL, CONTENT_TYPE};
 use axum::http::{HeaderName, HeaderValue, StatusCode, Uri};
 use axum::response::{IntoResponse, Response};
 use axum::routing::get;
+use serde::Deserialize;
+use serde::de::IgnoredAny;
 use tokio::net::TcpListener;
 
 /// Marker header: tells the app this origin accepts `PUT /tasks.json`.
@@ -186,11 +188,28 @@ async fn get_sheet(State(cfg): State<Arc<Config>>) -> Response {
         .into_response()
 }
 
+/// The shape of a sheet, mirroring `SheetSchema` in `web/src/lib/model.ts`.
+///
+/// Only checked, never used: the raw body is what gets stored, so unknown
+/// fields and the task contents round-trip untouched.
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+#[expect(dead_code, reason = "parsed to validate the upload, then dropped")]
+struct SheetShape {
+    /// Open tasks.
+    tasks: Vec<IgnoredAny>,
+    /// Archived sheets.
+    archive: Vec<IgnoredAny>,
+    /// Optional, but a number when present: `null` is refused like the app does.
+    #[serde(default)]
+    saved_at: f64,
+}
+
 /// Why a sheet upload was refused.
 #[derive(Debug)]
 enum PutError {
-    /// The body is not JSON; the existing sheet is left untouched.
-    InvalidJson,
+    /// The body is not a sheet; the existing sheet is left untouched.
+    InvalidSheet,
     /// Writing the file failed.
     Io(io::Error),
 }
@@ -198,8 +217,8 @@ enum PutError {
 /// Writes the sheet atomically (temp file + rename) after validating it, so
 /// a crash or a concurrent reader (Syncthing) never sees a partial sheet.
 fn write_sheet(data: &Path, body: &[u8]) -> Result<(), PutError> {
-    if serde_json::from_slice::<serde_json::Value>(body).is_err() {
-        return Err(PutError::InvalidJson);
+    if serde_json::from_slice::<SheetShape>(body).is_err() {
+        return Err(PutError::InvalidSheet);
     }
     let name = data
         .file_name()
@@ -226,7 +245,7 @@ async fn put_sheet(
         Err(rejection) => rejection.status(),
         Ok(body) => match write_sheet(&cfg.data, &body) {
             Ok(()) => StatusCode::NO_CONTENT,
-            Err(PutError::InvalidJson) => StatusCode::BAD_REQUEST,
+            Err(PutError::InvalidSheet) => StatusCode::BAD_REQUEST,
             Err(PutError::Io(e)) => {
                 eprintln!("writing {} failed: {e}", cfg.data.display());
                 StatusCode::INTERNAL_SERVER_ERROR
@@ -383,12 +402,57 @@ mod tests {
     fn write_sheet_rejects_invalid_json_and_keeps_existing_sheet() {
         let dir = scratch("invalid");
         let data = dir.join("tasks.json");
-        fs::write(&data, r#"{"tasks":[]}"#).unwrap();
+        fs::write(&data, r#"{"tasks":[],"archive":[]}"#).unwrap();
         assert!(matches!(
             write_sheet(&data, b"not json{{"),
-            Err(PutError::InvalidJson)
+            Err(PutError::InvalidSheet)
         ));
-        assert_eq!(fs::read_to_string(&data).unwrap(), r#"{"tasks":[]}"#);
+        assert_eq!(
+            fs::read_to_string(&data).unwrap(),
+            r#"{"tasks":[],"archive":[]}"#
+        );
+    }
+
+    #[test]
+    fn write_sheet_rejects_json_that_is_not_a_sheet_and_keeps_existing_sheet() {
+        let dir = scratch("not-a-sheet");
+        let data = dir.join("tasks.json");
+        let existing = r#"{"tasks":[{"id":"a"}],"archive":[]}"#;
+        fs::write(&data, existing).unwrap();
+        for bad in [
+            "null",
+            "[]",
+            "42",
+            "{}",
+            r#"{"tasks":[]}"#,
+            r#"{"archive":[]}"#,
+            r#"{"tasks":{},"archive":[]}"#,
+            r#"{"tasks":[],"archive":null}"#,
+            r#"{"tasks":[],"archive":[],"savedAt":"yesterday"}"#,
+            r#"{"tasks":[],"archive":[],"savedAt":null}"#,
+        ] {
+            assert!(
+                matches!(
+                    write_sheet(&data, bad.as_bytes()),
+                    Err(PutError::InvalidSheet)
+                ),
+                "{bad} must be refused"
+            );
+            assert_eq!(fs::read_to_string(&data).unwrap(), existing);
+        }
+    }
+
+    #[test]
+    fn write_sheet_stores_sheets_with_unknown_fields_byte_for_byte() {
+        let dir = scratch("loose");
+        let data = dir.join("tasks.json");
+        for good in [
+            r#"{"tasks":[],"archive":[]}"#,
+            r#"{"tasks":[{"id":"a","x":1}],"archive":[{"at":1,"tasks":[]}],"savedAt":1700000000000,"future":{"k":[1]}}"#,
+        ] {
+            write_sheet(&data, good.as_bytes()).unwrap();
+            assert_eq!(fs::read_to_string(&data).unwrap(), good);
+        }
     }
 
     #[test]
@@ -396,8 +460,9 @@ mod tests {
         let dir = scratch("atomic");
         let data = dir.join("tasks.json");
         fs::write(&data, "{}").unwrap();
-        write_sheet(&data, br#"{"tasks":[1]}"#).unwrap();
-        assert_eq!(fs::read_to_string(&data).unwrap(), r#"{"tasks":[1]}"#);
+        let sheet = r#"{"tasks":[1],"archive":[]}"#;
+        write_sheet(&data, sheet.as_bytes()).unwrap();
+        assert_eq!(fs::read_to_string(&data).unwrap(), sheet);
         let leftovers: Vec<_> = fs::read_dir(&dir)
             .unwrap()
             .map(|e| e.unwrap().file_name())
@@ -438,13 +503,14 @@ mod tests {
     #[tokio::test]
     async fn put_accepts_max_sheet_bytes_and_refuses_one_more() {
         let (app, data) = scratch_app("limit");
-        // a JSON string of exactly the limit, far above axum's 2 MiB default
+        // a sheet of exactly the limit, far above axum's 2 MiB default
+        let head = br#"{"tasks":[],"archive":[],"pad":""#;
         let mut sheet = vec![b'x'; MAX_SHEET_BYTES];
-        sheet[0] = b'"';
-        sheet[MAX_SHEET_BYTES - 1] = b'"';
+        sheet[..head.len()].copy_from_slice(head);
+        sheet[MAX_SHEET_BYTES - 2..].copy_from_slice(br#""}"#);
         let res = call(&app, "PUT", "/tasks.json", sheet.clone()).await;
         assert_eq!(res.status(), StatusCode::NO_CONTENT);
-        sheet.insert(1, b'x');
+        sheet.insert(head.len(), b'x');
         let res = call(&app, "PUT", "/tasks.json", sheet).await;
         assert_eq!(res.status(), StatusCode::PAYLOAD_TOO_LARGE);
         assert_eq!(res.headers()["x-eisenpaper"], "1");
