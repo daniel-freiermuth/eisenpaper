@@ -130,6 +130,10 @@ class SheetStore {
       this.status = "error";
       return;
     }
+    // an edit may have begun while the GET was in flight; leave
+    // #lastServerText alone so the next sync weighs this sheet again
+    // eslint-disable-next-line @typescript-eslint/no-unnecessary-condition -- both may change during the awaits above
+    if (this.editingId !== null || this.draft !== null) return;
     this.#lastServerText = text;
     const unsynced = this.#unsynced;
     this.#markSynced();
