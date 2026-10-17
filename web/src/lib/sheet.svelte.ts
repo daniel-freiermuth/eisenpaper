@@ -12,14 +12,20 @@ import {
 export type SyncStatus = "loading" | "synced" | "saving" | "offline" | "error";
 
 const CACHE_KEY = "eisenpaper.v1";
+/** set while the cached sheet has never been reconciled with tasks.json */
+const UNSYNCED_KEY = "eisenpaper.v1.unsynced";
 const ENDPOINT = "tasks.json";
 const WRITE_DELAY_MS = 300;
 /** browsers cap keepalive request bodies at 64 KiB */
 const KEEPALIVE_LIMIT = 60_000;
 
+/** The cached sheet, or an empty one that is flagged as never synced. */
 function loadCache(): Sheet {
   const raw = localStorage.getItem(CACHE_KEY);
-  return (raw === null ? null : parseSheet(raw)) ?? emptySheet();
+  const cached = raw === null ? null : parseSheet(raw);
+  if (cached !== null) return cached;
+  localStorage.setItem(UNSYNCED_KEY, "1");
+  return emptySheet();
 }
 
 /**
@@ -35,6 +41,8 @@ class SheetStore {
   /** a new note being typed; joins the sheet only once it has text */
   draft = $state<Task | null>(null);
 
+  /** never reconciled with tasks.json, so no base to overwrite it with */
+  #unsynced = localStorage.getItem(UNSYNCED_KEY) !== null;
   #lastServerText: string | null = null;
   #writeTimer: number | undefined;
 
@@ -53,6 +61,10 @@ class SheetStore {
   }
 
   async #write(): Promise<void> {
+    if (this.#unsynced) {
+      await this.sync(); // merges into the server's sheet first
+      return;
+    }
     const text = this.#serialize();
     if (text === this.#lastServerText) {
       this.status = "synced";
@@ -94,6 +106,7 @@ class SheetStore {
       return;
     }
     if (res.status === 404) {
+      this.#markSynced(); // nothing on the server to lose
       this.#lastServerText = null; // no sheet on disk yet — create it
       await this.#write();
       return;
@@ -118,13 +131,30 @@ class SheetStore {
       return;
     }
     this.#lastServerText = text;
-    if (reconcile(this.sheet, remote) === "adopt") {
+    const unsynced = this.#unsynced;
+    this.#markSynced();
+    const local = $state.snapshot(this.sheet);
+    if (unsynced && (local.tasks.length > 0 || local.archive.length > 0)) {
+      // everything here was written without ever seeing the server's
+      // sheet: add it to that sheet rather than replace it
+      this.sheet = {
+        ...remote,
+        tasks: [...remote.tasks, ...local.tasks],
+        archive: [...remote.archive, ...local.archive],
+      };
+      this.commit();
+    } else if (unsynced || reconcile(local, remote) === "adopt") {
       this.sheet = remote;
       localStorage.setItem(CACHE_KEY, text);
       this.status = "synced";
     } else {
       await this.#write();
     }
+  }
+
+  #markSynced(): void {
+    this.#unsynced = false;
+    localStorage.removeItem(UNSYNCED_KEY);
   }
 
   /** Initial sync plus window listeners; returns the teardown. */
