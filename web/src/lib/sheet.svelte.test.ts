@@ -88,6 +88,7 @@ beforeEach(() => {
   vi.stubGlobal("localStorage", {
     getItem: (k: string) => storage.get(k) ?? null,
     setItem: (k: string, v: string) => storage.set(k, v),
+    removeItem: (k: string) => storage.delete(k),
   });
   vi.stubGlobal("window", globalThis);
   fetchMock = vi.fn<typeof fetch>();
@@ -260,5 +261,49 @@ describe("SheetStore.sync", () => {
 
     expect(fetchMock).not.toHaveBeenCalled();
     expect(store.status).toBe("loading");
+  });
+
+  it("never overwrites the server with a sheet that never saw it", async () => {
+    const store = await loadStore(); // empty cache: a new device
+    fetchMock.mockRejectedValue(new TypeError("network down"));
+    await store.sync();
+    expect(store.status).toBe("offline");
+
+    store.addDraft(0.2, 0.2);
+    const draft = store.draft;
+    if (draft === null) throw new Error("no draft");
+    store.finishEdit(draft, "buy milk");
+    await vi.advanceTimersByTimeAsync(300);
+
+    fetchMock.mockReset();
+    fetchMock.mockImplementation(server(204));
+    await store.sync();
+    await vi.advanceTimersByTimeAsync(300);
+
+    expect(putBodies()).toMatchObject([
+      { tasks: [{ id: "t1" }, { text: "buy milk" }] },
+    ]);
+    expect(store.sheet.tasks.map((t) => t.text)).toEqual([
+      "file tax return",
+      "buy milk",
+    ]);
+  });
+
+  it("does not save blind once the server is back before any sync", async () => {
+    const store = await loadStore(); // empty cache: a new device
+    fetchMock.mockRejectedValue(new TypeError("network down"));
+    await store.sync();
+
+    fetchMock.mockReset();
+    fetchMock.mockImplementation(server(204));
+    store.addDraft(0.2, 0.2);
+    const draft = store.draft;
+    if (draft === null) throw new Error("no draft");
+    store.finishEdit(draft, "buy milk");
+    await vi.advanceTimersByTimeAsync(600);
+
+    expect(putBodies()).toMatchObject([
+      { tasks: [{ id: "t1" }, { text: "buy milk" }] },
+    ]);
   });
 });
