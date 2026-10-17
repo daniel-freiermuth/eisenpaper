@@ -8,6 +8,7 @@ import {
   type Sheet,
   type Task,
 } from "./model";
+import { placeTask } from "./schedule";
 
 export type SyncStatus = "loading" | "synced" | "saving" | "offline" | "error";
 
@@ -230,6 +231,12 @@ class SheetStore {
 
   remove(task: Task): void {
     this.#removeById(task.id);
+    this.commit();
+  }
+
+  /** Drop from the schedule pane: a day and index, or null = backlog. */
+  schedule(id: string, day: string | null, index: number): void {
+    placeTask(this.sheet.tasks, id, day, index);
     this.commit();
   }
 

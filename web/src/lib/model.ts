@@ -14,6 +14,10 @@ export const TaskSchema = v.looseObject({
   done: v.boolean(),
   created: v.number(),
   doneAt: v.optional(v.number()),
+  /** scheduled local date, YYYY-MM-DD; absent = backlog */
+  day: v.optional(v.pipe(v.string(), v.isoDate())),
+  /** position within its day; meaningless without `day` */
+  order: v.optional(v.number()),
 });
 export type Task = v.InferOutput<typeof TaskSchema>;
 

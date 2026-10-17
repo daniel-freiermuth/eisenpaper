@@ -2,7 +2,9 @@
   import type { Attachment } from "svelte/attachments";
 
   import { rotation, type Task } from "./model";
+  import { dueLabel } from "./schedule";
   import { store } from "./sheet.svelte";
+  import { today } from "./today.svelte";
 
   interface Props {
     task: Task;
@@ -15,12 +17,14 @@
   /** below this a press counts as a click, not a drag */
   const DRAG_THRESHOLD_PX = 6;
 
-  /** pointer and card position at press time; the card moves by the pointer's delta */
+  /** pointer, card position and pane size at press time; the card moves by the pointer's delta */
   let press: {
     x: number;
     y: number;
     taskX: number;
     taskY: number;
+    paneW: number;
+    paneH: number;
     moved: boolean;
   } | null = null;
   let dragging = $state(false);
@@ -40,14 +44,18 @@
 
   function onpointerdown(e: PointerEvent): void {
     if (e.button !== 0 || editing) return;
+    const el = e.currentTarget as HTMLElement;
+    const pane = el.offsetParent ?? document.documentElement;
     press = {
       x: e.clientX,
       y: e.clientY,
       taskX: task.x,
       taskY: task.y,
+      paneW: pane.clientWidth,
+      paneH: pane.clientHeight,
       moved: false,
     };
-    (e.currentTarget as HTMLElement).setPointerCapture(e.pointerId);
+    el.setPointerCapture(e.pointerId);
   }
 
   function onpointermove(e: PointerEvent): void {
@@ -61,8 +69,8 @@
     dragging = true;
     store.move(
       task,
-      press.taskX + (e.clientX - press.x) / innerWidth,
-      press.taskY + (e.clientY - press.y) / innerHeight,
+      press.taskX + (e.clientX - press.x) / press.paneW,
+      press.taskY + (e.clientY - press.y) / press.paneH,
     );
   }
 
@@ -159,6 +167,13 @@
     ></span>
   {:else}
     <span class="txt">{task.text}</span>
+    {#if task.day !== undefined}
+      <span
+        class="when"
+        class:late={!task.done && task.day < today.value}
+        title="scheduled {task.day}">{dueLabel(task.day, today.value)}</span
+      >
+    {/if}
   {/if}
 </div>
 
@@ -189,6 +204,17 @@
     z-index: 10;
     background: rgb(from var(--highlight) r g b / 75%);
     box-shadow: 2px 3px 8px rgb(43 42 38 / 18%);
+  }
+
+  .when {
+    margin-left: 6px;
+    font-size: 13px;
+    color: var(--pencil);
+    white-space: nowrap;
+  }
+
+  .late {
+    color: var(--accent);
   }
 
   .done {

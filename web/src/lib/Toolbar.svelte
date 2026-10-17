@@ -101,15 +101,37 @@
     position: fixed;
     top: 10px;
     right: 12px;
+    left: calc(var(--tabs-w) + 8px);
     z-index: 20;
     display: flex;
+    flex-wrap: wrap;
+    justify-content: flex-end;
     gap: 6px;
+    pointer-events: none; /* the bar spans the width; only buttons catch clicks */
     opacity: 0.45;
     transition: opacity 0.15s;
   }
 
   .bar:hover {
     opacity: 1;
+  }
+
+  button {
+    pointer-events: auto;
+    white-space: nowrap;
+  }
+
+  @media (width <= 700px) {
+    .bar {
+      top: 8px;
+      right: 8px;
+      gap: 3px;
+    }
+
+    button {
+      font-size: 12px;
+      padding: 2px 5px;
+    }
   }
 
   .ok {
