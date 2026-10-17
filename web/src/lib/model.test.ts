@@ -54,6 +54,27 @@ describe("parseSheet", () => {
         archive: [],
       }),
     ],
+    [
+      "two tasks sharing an id",
+      JSON.stringify({ tasks: [task(), task()], archive: [] }),
+    ],
+    [
+      "two archived tasks sharing an id in one entry",
+      JSON.stringify({
+        tasks: [],
+        archive: [{ at: 9, tasks: [task(), task()] }],
+      }),
+    ],
+    [
+      "two archive entries sharing a timestamp",
+      JSON.stringify({
+        tasks: [],
+        archive: [
+          { at: 9, tasks: [task()] },
+          { at: 9, tasks: [task({ id: "t2" })] },
+        ],
+      }),
+    ],
   ])("rejects %s", (_name, text) => {
     expect(parseSheet(text)).toBeNull();
   });
