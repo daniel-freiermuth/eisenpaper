@@ -117,6 +117,7 @@
   function onEditKeydown(e: KeyboardEvent): void {
     if (e.key === "Enter" && !e.shiftKey) {
       e.preventDefault();
+      e.stopPropagation(); // the blur ends the edit; the note would restart it
       (e.currentTarget as HTMLElement).blur();
     } else if (e.key === "Escape") {
       e.preventDefault();
