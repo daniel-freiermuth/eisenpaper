@@ -121,8 +121,6 @@ export const SheetSchema = v.looseObject({
       uniqueBy((p: Project) => p.id),
     ),
   ),
-  /** ms timestamp of the last local change; newer side wins on sync */
-  savedAt: v.optional(v.number()),
 });
 export type Sheet = v.InferOutput<typeof SheetSchema>;
 
@@ -140,9 +138,111 @@ export function parseSheet(text: string): Sheet | null {
   return result.success ? result.output : null;
 }
 
-/** Last writer wins: take the remote sheet unless ours is strictly newer. */
-export function reconcile(local: Sheet, remote: Sheet): "adopt" | "push" {
-  return (remote.savedAt ?? 0) >= (local.savedAt ?? 0) ? "adopt" : "push";
+/** Structural equality of JSON values: key order and undefined fields don't count. */
+export function sameJson(a: unknown, b: unknown): boolean {
+  if (a === b) return true;
+  if (typeof a !== "object" || typeof b !== "object") return false;
+  if (a === null || b === null) return false;
+  if (Array.isArray(a) || Array.isArray(b)) {
+    return (
+      Array.isArray(a) &&
+      Array.isArray(b) &&
+      a.length === b.length &&
+      a.every((item, i) => sameJson(item, b[i]))
+    );
+  }
+  const ra = a as Record<string, unknown>;
+  const rb = b as Record<string, unknown>;
+  const keys = new Set([...Object.keys(ra), ...Object.keys(rb)]);
+  return [...keys].every((k) => sameJson(ra[k], rb[k]));
+}
+
+/**
+ * Field-by-field three-way merge: a field takes the side that changed it
+ * since `base`; when both did, the local value wins. A field one side
+ * removed (and the other left alone) is removed. Remote key order is kept.
+ */
+function mergeFields<T extends Record<string, unknown>>(
+  base: T | undefined,
+  local: T,
+  remote: T,
+): T {
+  const out: Record<string, unknown> = {};
+  for (const key of new Set([...Object.keys(remote), ...Object.keys(local)])) {
+    const value = sameJson(local[key], base?.[key]) ? remote[key] : local[key];
+    if (value !== undefined) out[key] = value;
+  }
+  return out as T;
+}
+
+/**
+ * Three-way merge of two lists of keyed items. An item on both sides is
+ * merged with `mergeItem`; one that only one side has is kept if that side
+ * added or changed it, and dropped if it is the base version the other
+ * side removed. Remote order first, then local additions.
+ */
+function mergeByKey<T>(
+  base: readonly T[],
+  local: readonly T[],
+  remote: readonly T[],
+  key: (item: T) => unknown,
+  mergeItem: (base: T | undefined, local: T, remote: T) => T,
+): T[] {
+  const baseBy = new Map(base.map((item) => [key(item), item]));
+  const localBy = new Map(local.map((item) => [key(item), item]));
+  const remoteKeys = new Set(remote.map(key));
+  const keptBy = (item: T): boolean => {
+    const was = baseBy.get(key(item));
+    return was === undefined || !sameJson(item, was);
+  };
+  const out: T[] = [];
+  for (const r of remote) {
+    const l = localBy.get(key(r));
+    if (l !== undefined) out.push(mergeItem(baseBy.get(key(r)), l, r));
+    else if (keptBy(r)) out.push(r);
+  }
+  for (const l of local) {
+    if (!remoteKeys.has(key(l)) && keptBy(l)) out.push(l);
+  }
+  return out;
+}
+
+/**
+ * Merges the local sheet with the server's, both descended from `base`
+ * (the server sheet this device last saw; empty if it never saw one).
+ * Tasks and projects merge by `id` and field by field, archive entries by
+ * `at`, so edits to different items or fields on two devices all survive.
+ * Only when both changed the same field does the local value win; an item
+ * one side deleted stays deleted unless the other side changed it.
+ */
+export function mergeSheets(base: Sheet, local: Sheet, remote: Sheet): Sheet {
+  const merged: Sheet = {
+    ...mergeFields(base, local, remote),
+    tasks: mergeByKey(
+      base.tasks,
+      local.tasks,
+      remote.tasks,
+      (t) => t.id,
+      mergeFields,
+    ),
+    archive: mergeByKey(
+      base.archive,
+      local.archive,
+      remote.archive,
+      (a) => a.at,
+      mergeFields,
+    ),
+  };
+  if (local.projects !== undefined || remote.projects !== undefined) {
+    merged.projects = mergeByKey(
+      base.projects ?? [],
+      local.projects ?? [],
+      remote.projects ?? [],
+      (p) => p.id,
+      mergeFields,
+    );
+  }
+  return merged;
 }
 
 /**

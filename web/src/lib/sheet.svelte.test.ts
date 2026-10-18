@@ -21,13 +21,18 @@ const serverTask: Task = {
   done: false,
   created: 1,
 };
-const serverSheet: Sheet = { tasks: [serverTask], archive: [], savedAt: 10 };
+const serverSheet: Sheet = { tasks: [serverTask], archive: [] };
 const serverText = JSON.stringify(serverSheet, null, 2);
+const emptyText = JSON.stringify({ tasks: [], archive: [] }, null, 2);
 
-const reply = (status: number, body = ""): Response =>
+const reply = (
+  status: number,
+  body = "",
+  headers: Record<string, string> = {},
+): Response =>
   new Response(status === 204 ? null : body, {
     status,
-    headers: { "x-eisenpaper": "1" },
+    headers: { "x-eisenpaper": "1", ...headers },
   });
 
 type Fetch = (
@@ -45,28 +50,69 @@ const serve =
 const server = (putStatus: number): Fetch =>
   serve(() => reply(200, serverText), putStatus);
 
-const CACHE_KEY = "eisenpaper.v1";
-
-/** The browser copy, distinct from `serverSheet`; `savedAt` decides who wins. */
-const localText = (savedAt: number): string =>
-  JSON.stringify(
-    {
-      tasks: [
-        {
-          id: "t2",
-          text: "call the plumber",
-          x: 0.2,
-          y: 0.3,
-          done: false,
-          created: 2,
-        },
-      ],
-      archive: [],
-      savedAt,
+/**
+ * tasks.json behind the conditional-request protocol of src/main.rs: GET
+ * sends an ETag, PUT needs If-Match with it (or If-None-Match: * while
+ * there is no sheet) and gets 412 otherwise.
+ */
+function fakeServer(initial: string | null) {
+  let text = initial;
+  let version = 0;
+  const tag = (): string => `"v${String(version)}"`;
+  const handle: Fetch = (_url, init) => {
+    if (init?.method !== "PUT") {
+      return Promise.resolve(
+        text === null ? reply(404) : reply(200, text, { etag: tag() }),
+      );
+    }
+    const headers = new Headers(init.headers);
+    const ifMatch = headers.get("if-match");
+    const ifNoneMatch = headers.get("if-none-match");
+    if (ifMatch === null && ifNoneMatch === null) {
+      return Promise.resolve(reply(428));
+    }
+    const holds =
+      ifMatch === null
+        ? ifNoneMatch === "*" && text === null
+        : text !== null && ifMatch === tag();
+    if (!holds) return Promise.resolve(reply(412, "", { etag: tag() }));
+    text = init.body as string;
+    version += 1;
+    return Promise.resolve(reply(204, "", { etag: tag() }));
+  };
+  return {
+    handle,
+    /** what tasks.json holds now */
+    sheet: (): unknown => (text === null ? null : JSON.parse(text)),
+    /** another device saves `sheet` */
+    save(sheet: Sheet): void {
+      text = JSON.stringify(sheet, null, 2);
+      version += 1;
     },
-    null,
-    2,
-  );
+  };
+}
+
+const CACHE_KEY = "eisenpaper.v1";
+const BASE_KEY = "eisenpaper.v1.base";
+
+/** A browser copy that never saw `serverSheet`. */
+const localText = JSON.stringify(
+  {
+    tasks: [
+      {
+        id: "t2",
+        text: "call the plumber",
+        x: 0.2,
+        y: 0.3,
+        done: false,
+        created: 2,
+      },
+    ],
+    archive: [],
+  },
+  null,
+  2,
+);
 
 let storage: Map<string, string>;
 
@@ -108,8 +154,9 @@ afterEach(() => {
 
 describe("SheetStore.sync", () => {
   it("pushes an edit whose save failed offline once the server is back", async () => {
+    const tasks = fakeServer(serverText);
     const store = await loadStore();
-    fetchMock.mockImplementation(server(204));
+    fetchMock.mockImplementation(tasks.handle);
     await store.sync();
     expect(store.status).toBe("synced");
 
@@ -121,7 +168,7 @@ describe("SheetStore.sync", () => {
     expect(store.status).toBe("offline");
 
     fetchMock.mockReset();
-    fetchMock.mockImplementation(server(204));
+    fetchMock.mockImplementation(tasks.handle);
     await store.sync();
 
     expect(putBodies()).toMatchObject([{ tasks: [{ id: "t1", done: true }] }]);
@@ -129,83 +176,94 @@ describe("SheetStore.sync", () => {
   });
 
   it("retries a push that the server rejected", async () => {
+    const tasks = fakeServer(serverText);
     const store = await loadStore();
-    fetchMock.mockImplementation(server(204));
+    fetchMock.mockImplementation(tasks.handle);
     await store.sync();
-    store.replace({ tasks: [], archive: [] }); // local edit, newer than the server
+    store.replace({ tasks: [], archive: [] });
     fetchMock.mockReset();
     fetchMock.mockImplementation(server(500));
     await store.sync();
     expect(store.status).toBe("error");
 
     fetchMock.mockReset();
-    fetchMock.mockImplementation(server(204));
+    fetchMock.mockImplementation(tasks.handle);
     await store.sync();
 
     expect(putBodies()).toMatchObject([{ tasks: [] }]);
+    expect(tasks.sheet()).toMatchObject({ tasks: [] });
     expect(store.status).toBe("synced");
   });
 
   it("never pushes to an origin that is not the eisenpaper server", async () => {
-    storage.set(CACHE_KEY, localText(99)); // would win a reconcile
+    storage.set(CACHE_KEY, localText);
     const store = await loadStore();
     fetchMock.mockResolvedValue(new Response(serverText, { status: 200 }));
     await store.sync();
 
     expect(store.status).toBe("offline");
     expect(puts()).toHaveLength(0);
-    expect(store.exportText()).toBe(localText(99));
+    expect(store.exportText()).toBe(localText);
   });
 
   it("keeps the browser copy when the server is unreachable", async () => {
-    storage.set(CACHE_KEY, localText(5));
+    storage.set(CACHE_KEY, localText);
     const store = await loadStore();
     fetchMock.mockRejectedValue(new TypeError("network down"));
     await store.sync();
 
     expect(store.status).toBe("offline");
-    expect(store.exportText()).toBe(localText(5));
-    expect(storage.get(CACHE_KEY)).toBe(localText(5));
+    expect(store.exportText()).toBe(localText);
+    expect(storage.get(CACHE_KEY)).toBe(localText);
   });
 
   it("creates tasks.json from the local sheet when the server has none", async () => {
-    storage.set(CACHE_KEY, localText(5));
+    storage.set(CACHE_KEY, localText);
+    const tasks = fakeServer(null);
     const store = await loadStore();
-    fetchMock.mockImplementation(serve(() => reply(404)));
+    fetchMock.mockImplementation(tasks.handle);
     await store.sync();
 
-    expect(puts().map(([, init]) => init?.body)).toEqual([localText(5)]);
+    expect(puts().map(([, init]) => init?.body)).toEqual([localText]);
+    expect(tasks.sheet()).toEqual(JSON.parse(localText));
     expect(store.status).toBe("synced");
   });
 
   it("keeps the local sheet when tasks.json is not a valid sheet", async () => {
-    storage.set(CACHE_KEY, localText(5));
+    storage.set(CACHE_KEY, localText);
     const store = await loadStore();
-    const corrupt = JSON.stringify({ tasks: "nope", archive: [], savedAt: 99 });
+    const corrupt = JSON.stringify({ tasks: "nope", archive: [] });
     fetchMock.mockImplementation(serve(() => reply(200, corrupt)));
     await store.sync();
 
     expect(store.status).toBe("error");
-    expect(store.exportText()).toBe(localText(5));
-    expect(storage.get(CACHE_KEY)).toBe(localText(5));
+    expect(store.exportText()).toBe(localText);
+    expect(storage.get(CACHE_KEY)).toBe(localText);
     expect(puts()).toHaveLength(0);
   });
 
   it("neither adopts nor pushes when the server fails", async () => {
-    storage.set(CACHE_KEY, localText(5)); // older than the body below
+    storage.set(CACHE_KEY, localText);
     const store = await loadStore();
     fetchMock.mockImplementation(serve(() => reply(500, serverText)));
     await store.sync();
 
     expect(store.status).toBe("error");
-    expect(store.exportText()).toBe(localText(5));
+    expect(store.exportText()).toBe(localText);
     expect(puts()).toHaveLength(0);
   });
 
   it("does not save over a sheet the server failed to read", async () => {
-    storage.set(CACHE_KEY, localText(5)); // a device that has synced before
+    storage.set(CACHE_KEY, localText);
+    storage.set(BASE_KEY, emptyText); // a device that has synced before
     const store = await loadStore();
-    fetchMock.mockImplementation(serve(() => reply(500)));
+    const tasks = fakeServer(serverText);
+    // GET fails, but tasks.json exists and PUT still checks against it
+    fetchMock.mockImplementation((url, init) =>
+      init?.method === "PUT"
+        ? tasks.handle(url, init)
+        : Promise.resolve(reply(500)),
+    );
     await store.sync();
     expect(store.status).toBe("error");
 
@@ -214,63 +272,142 @@ describe("SheetStore.sync", () => {
     store.toggleDone(task);
     await vi.advanceTimersByTimeAsync(300);
 
-    expect(puts()).toHaveLength(0);
+    expect(tasks.sheet()).toEqual(serverSheet);
     expect(store.status).toBe("error");
 
-    // once tasks.json is readable again the edit is weighed against it
+    // once tasks.json is readable again the edit is merged into it
     fetchMock.mockReset();
-    fetchMock.mockImplementation(server(204));
+    fetchMock.mockImplementation(tasks.handle);
     await store.sync();
 
-    expect(putBodies()).toMatchObject([{ tasks: [{ id: "t2", done: true }] }]);
+    expect(tasks.sheet()).toMatchObject({
+      tasks: [{ id: "t1" }, { id: "t2", done: true }],
+    });
     expect(store.status).toBe("synced");
   });
 
-  it("adopts a newer server sheet and caches it for the next reload", async () => {
-    storage.set(CACHE_KEY, localText(5)); // server savedAt is 10
+  it("adopts the server sheet when nothing changed here, and caches it", async () => {
+    storage.set(CACHE_KEY, emptyText);
+    storage.set(BASE_KEY, emptyText); // last synced before t1 was added
     const store = await loadStore();
-    fetchMock.mockImplementation(server(204));
+    fetchMock.mockImplementation(fakeServer(serverText).handle);
     await store.sync();
 
     expect(store.status).toBe("synced");
     expect(JSON.parse(store.exportText())).toEqual(serverSheet);
     expect(storage.get(CACHE_KEY)).toBe(serverText);
+    expect(storage.get(BASE_KEY)).toBe(serverText);
     expect(puts()).toHaveLength(0);
   });
 
-  it("pushes a strictly newer local sheet exactly once", async () => {
-    storage.set(CACHE_KEY, localText(20)); // server savedAt is 10
+  it("pushes local edits merged into the server sheet exactly once", async () => {
+    storage.set(CACHE_KEY, localText); // t2 added here...
+    storage.set(BASE_KEY, emptyText);
+    const tasks = fakeServer(serverText); // ...t1 added elsewhere
     const store = await loadStore();
-    fetchMock.mockImplementation(server(204));
+    fetchMock.mockImplementation(tasks.handle);
     await store.sync();
 
-    expect(puts().map(([, init]) => init?.body)).toEqual([localText(20)]);
+    expect(tasks.sheet()).toMatchObject({
+      tasks: [{ id: "t1" }, { id: "t2" }],
+    });
     expect(store.status).toBe("synced");
 
     // the server now holds what we pushed: nothing left to send
-    fetchMock.mockImplementation(serve(() => reply(200, localText(20))));
     await store.sync();
 
     expect(puts()).toHaveLength(1);
     expect(store.status).toBe("synced");
   });
 
-  it("pushes again when an older sheet replaced the one we pushed", async () => {
-    storage.set(CACHE_KEY, localText(20)); // server savedAt is 10
-    const store = await loadStore();
-    fetchMock.mockImplementation(server(204));
-    await store.sync();
-    expect(puts()).toHaveLength(1);
-
-    // a tab with an older savedAt overwrote tasks.json after our push, so the
-    // server serves serverText again: ours must go back over it
+  it("merges another device's save instead of overwriting it", async () => {
+    const tasks = fakeServer(serverText);
+    const store = await loadStore(); // the desktop
+    fetchMock.mockImplementation(tasks.handle);
     await store.sync();
 
-    expect(puts().map(([, init]) => init?.body)).toEqual([
-      localText(20),
-      localText(20),
-    ]);
+    // the phone adds a task; the focused desktop never pulls it
+    const phoneTask = { ...serverTask, id: "phone", text: "buy milk" };
+    tasks.save({ tasks: [serverTask, phoneTask], archive: [] });
+    const task = store.sheet.tasks[0];
+    if (task === undefined) throw new Error("server sheet not adopted");
+    store.toggleDone(task);
+    await vi.advanceTimersByTimeAsync(300);
+
+    expect(tasks.sheet()).toMatchObject({
+      tasks: [
+        { id: "t1", done: true },
+        { id: "phone", text: "buy milk" },
+      ],
+    });
+    expect(store.sheet.tasks.map((t) => t.id)).toEqual(["t1", "phone"]);
     expect(store.status).toBe("synced");
+  });
+
+  it("keeps offline edits across a reload when another device saved since", async () => {
+    const tasks = fakeServer(serverText);
+    let store = await loadStore(); // the phone
+    fetchMock.mockImplementation(tasks.handle);
+    await store.sync();
+
+    fetchMock.mockRejectedValue(new TypeError("network down"));
+    const task = store.sheet.tasks[0];
+    if (task === undefined) throw new Error("server sheet not adopted");
+    store.toggleDone(task);
+    await vi.advanceTimersByTimeAsync(300);
+    expect(store.status).toBe("offline");
+
+    // the desktop edits later; then the phone reloads the app, back online
+    const desktopTask = { ...serverTask, id: "desk", text: "renew passport" };
+    tasks.save({ tasks: [serverTask, desktopTask], archive: [] });
+    store = await loadStore();
+    fetchMock.mockReset();
+    fetchMock.mockImplementation(tasks.handle);
+    await store.sync();
+
+    expect(tasks.sheet()).toMatchObject({
+      tasks: [{ id: "t1", done: true }, { id: "desk" }],
+    });
+    expect(store.status).toBe("synced");
+  });
+
+  it("does not bring back a task another device deleted", async () => {
+    const tasks = fakeServer(serverText);
+    const store = await loadStore();
+    fetchMock.mockImplementation(tasks.handle);
+    await store.sync();
+
+    tasks.save({ tasks: [], archive: [] }); // deleted on the phone
+    store.addDraft(0.2, 0.2);
+    const draft = store.draft;
+    if (draft === null) throw new Error("no draft");
+    store.finishEdit(draft, "buy milk");
+    await vi.advanceTimersByTimeAsync(300);
+
+    expect(tasks.sheet()).toMatchObject({ tasks: [{ text: "buy milk" }] });
+    expect(store.sheet.tasks.map((t) => t.text)).toEqual(["buy milk"]);
+  });
+
+  it("gives up with an error when tasks.json changes on every save", async () => {
+    const store = await loadStore();
+    let n = 0;
+    fetchMock.mockImplementation((_url, init) => {
+      n += 1;
+      if (init?.method === "PUT") return Promise.resolve(reply(412));
+      const sheet = {
+        tasks: [{ ...serverTask, text: String(n) }],
+        archive: [],
+      };
+      return Promise.resolve(
+        reply(200, JSON.stringify(sheet), { etag: `"${String(n)}"` }),
+      );
+    });
+    await store.sync();
+    store.replace({ tasks: [], archive: [], note: "mine" });
+    await vi.advanceTimersByTimeAsync(300);
+
+    expect(store.status).toBe("error");
+    expect(puts()).toHaveLength(4); // the save plus three merges
   });
 
   it("does not touch the server while a task is being edited", async () => {
@@ -294,6 +431,7 @@ describe("SheetStore.sync", () => {
   });
 
   it("never overwrites the server with a sheet that never saw it", async () => {
+    const tasks = fakeServer(serverText);
     const store = await loadStore(); // empty cache: a new device
     fetchMock.mockRejectedValue(new TypeError("network down"));
     await store.sync();
@@ -306,13 +444,13 @@ describe("SheetStore.sync", () => {
     await vi.advanceTimersByTimeAsync(300);
 
     fetchMock.mockReset();
-    fetchMock.mockImplementation(server(204));
+    fetchMock.mockImplementation(tasks.handle);
     await store.sync();
     await vi.advanceTimersByTimeAsync(300);
 
-    expect(putBodies()).toMatchObject([
-      { tasks: [{ id: "t1" }, { text: "buy milk" }] },
-    ]);
+    expect(tasks.sheet()).toMatchObject({
+      tasks: [{ id: "t1" }, { text: "buy milk" }],
+    });
     expect(store.sheet.tasks.map((t) => t.text)).toEqual([
       "file tax return",
       "buy milk",
@@ -320,21 +458,22 @@ describe("SheetStore.sync", () => {
   });
 
   it("does not save blind once the server is back before any sync", async () => {
+    const tasks = fakeServer(serverText);
     const store = await loadStore(); // empty cache: a new device
     fetchMock.mockRejectedValue(new TypeError("network down"));
     await store.sync();
 
     fetchMock.mockReset();
-    fetchMock.mockImplementation(server(204));
+    fetchMock.mockImplementation(tasks.handle);
     store.addDraft(0.2, 0.2);
     const draft = store.draft;
     if (draft === null) throw new Error("no draft");
     store.finishEdit(draft, "buy milk");
     await vi.advanceTimersByTimeAsync(600);
 
-    expect(putBodies()).toMatchObject([
-      { tasks: [{ id: "t1" }, { text: "buy milk" }] },
-    ]);
+    expect(tasks.sheet()).toMatchObject({
+      tasks: [{ id: "t1" }, { text: "buy milk" }],
+    });
   });
 
   it("does not yank a note whose edit began while the GET was in flight", async () => {
@@ -351,20 +490,16 @@ describe("SheetStore.sync", () => {
     );
     const pending = store.sync();
     store.startEdit(task);
-    resolveGet(
-      reply(200, JSON.stringify({ tasks: [], archive: [], savedAt: 20 })),
-    );
+    resolveGet(reply(200, emptyText)); // t1 was deleted elsewhere
     await pending;
 
     expect(store.sheet.tasks.map((t) => t.id)).toContain("t1");
     expect(store.editingId).toBe("t1");
 
-    // the newer sheet is adopted by the first sync after the edit ends
+    // the deletion is adopted by the first sync after the edit ends
     store.cancelEdit();
     fetchMock.mockReset();
-    fetchMock.mockResolvedValue(
-      reply(200, JSON.stringify({ tasks: [], archive: [], savedAt: 20 })),
-    );
+    fetchMock.mockResolvedValue(reply(200, emptyText));
     await store.sync();
     expect(store.sheet.tasks).toEqual([]);
   });
@@ -407,28 +542,20 @@ describe("SheetStore.commit", () => {
     expect(store.status).toBe("synced");
   });
 
-  it("stamps savedAt and caches the sheet at once, even when the PUT fails", async () => {
+  it("caches the sheet at once, even when the PUT fails", async () => {
     const store = await syncedStore();
     fetchMock.mockImplementation(server(500));
-    vi.setSystemTime(1234);
 
     store.toggleDone(firstTask(store));
 
     expect(fetchMock).not.toHaveBeenCalled();
-    expect(store.sheet.savedAt).toBe(1234);
     const cached = (): unknown => JSON.parse(storage.get(CACHE_KEY) ?? "null");
-    expect(cached()).toMatchObject({
-      savedAt: 1234,
-      tasks: [{ id: "t1", done: true }],
-    });
+    expect(cached()).toMatchObject({ tasks: [{ id: "t1", done: true }] });
 
     await vi.advanceTimersByTimeAsync(300);
     expect(puts()).toHaveLength(1);
     expect(store.status).toBe("error");
-    expect(cached()).toMatchObject({
-      savedAt: 1234,
-      tasks: [{ id: "t1", done: true }],
-    });
+    expect(cached()).toMatchObject({ tasks: [{ id: "t1", done: true }] });
   });
 
   /** Like `server(204)`, but rejects a keepalive PUT over the browsers'
@@ -615,12 +742,12 @@ describe("SheetStore edit lifecycle", () => {
     created: 2,
   };
   const cachedText = JSON.stringify(
-    { tasks: [serverTask, plumber], archive: [], savedAt: 5 },
+    { tasks: [serverTask, plumber], archive: [] },
     null,
     2,
   );
 
-  /** A store loaded from its cache, so not unsynced: every commit PUTs directly. */
+  /** A store loaded from its cache, saving to a server that takes every PUT. */
   async function editingStore() {
     storage.set(CACHE_KEY, cachedText);
     vi.setSystemTime(1000);
@@ -663,7 +790,6 @@ describe("SheetStore edit lifecycle", () => {
     store.addDraft(0.4, 0.6);
     const draft = store.draft;
     if (draft === null) throw new Error("no draft");
-    vi.setSystemTime(2000);
     store.finishEdit(draft, "  buy milk \n");
 
     expect(store.draft).toBeNull();
@@ -674,12 +800,11 @@ describe("SheetStore edit lifecycle", () => {
       { id: "t2" },
       added,
     ]);
-    expect(store.sheet.savedAt).toBe(2000);
     expect(storage.get(CACHE_KEY)).toBe(store.exportText());
 
     await vi.advanceTimersByTimeAsync(300);
     expect(putBodies()).toMatchObject([
-      { tasks: [{ id: "t1" }, { id: "t2" }, added], savedAt: 2000 },
+      { tasks: [{ id: "t1" }, { id: "t2" }, added] },
     ]);
   });
 
@@ -687,24 +812,19 @@ describe("SheetStore edit lifecycle", () => {
     const store = await editingStore();
     const task = sheetTask(store, "t2");
     store.startEdit(task);
-    vi.setSystemTime(2000);
     store.finishEdit(task, " \n ");
 
     expect(store.editingId).toBeNull();
     expect(store.sheet.tasks).toEqual([serverTask]);
-    expect(store.sheet.savedAt).toBe(2000);
 
     await vi.advanceTimersByTimeAsync(300);
-    expect(putBodies()).toEqual([
-      { tasks: [serverTask], archive: [], savedAt: 2000 },
-    ]);
+    expect(putBodies()).toEqual([{ tasks: [serverTask], archive: [] }]);
   });
 
   it("updates an edited note in place with its text trimmed", async () => {
     const store = await editingStore();
     const task = sheetTask(store, "t2");
     store.startEdit(task);
-    vi.setSystemTime(2000);
     store.finishEdit(task, "\tcall the plumber today  ");
 
     expect(store.editingId).toBeNull();
@@ -712,9 +832,7 @@ describe("SheetStore edit lifecycle", () => {
     expect(store.sheet.tasks).toEqual([serverTask, edited]);
 
     await vi.advanceTimersByTimeAsync(300);
-    expect(putBodies()).toEqual([
-      { tasks: [serverTask, edited], archive: [], savedAt: 2000 },
-    ]);
+    expect(putBodies()).toEqual([{ tasks: [serverTask, edited], archive: [] }]);
   });
 
   it("cancels a draft without adding or saving anything", async () => {
