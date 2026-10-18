@@ -44,6 +44,8 @@ class SheetStore {
 
   /** never reconciled with tasks.json, so no base to overwrite it with */
   #unsynced = localStorage.getItem(UNSYNCED_KEY) !== null;
+  /** the last GET failed, so tasks.json may hold edits we have not seen */
+  #serverFailed = false;
   #lastServerText: string | null = null;
   #writeTimer: number | undefined;
 
@@ -62,7 +64,7 @@ class SheetStore {
   }
 
   async #write(): Promise<void> {
-    if (this.#unsynced) {
+    if (this.#unsynced || this.#serverFailed) {
       await this.sync(); // merges into the server's sheet first
       return;
     }
@@ -107,15 +109,18 @@ class SheetStore {
       return;
     }
     if (res.status === 404) {
+      this.#serverFailed = false;
       this.#markSynced(); // nothing on the server to lose
       this.#lastServerText = null; // no sheet on disk yet — create it
       await this.#write();
       return;
     }
     if (!res.ok) {
+      this.#serverFailed = true; // a sheet may exist: never save blind over it
       this.status = "error";
       return;
     }
+    this.#serverFailed = false;
     const text = await res.text();
     if (text === this.#lastServerText) {
       // server unchanged since our last sync: push any local edits whose
