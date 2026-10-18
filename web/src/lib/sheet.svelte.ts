@@ -2,10 +2,11 @@ import {
   clampPosition,
   emptySheet,
   freshSheet,
+  mergeSheets,
   newId,
   nextProjectColor,
   parseSheet,
-  reconcile,
+  sameJson,
   type Sheet,
   type Task,
 } from "./model";
@@ -14,27 +15,34 @@ import { placeTask } from "./schedule";
 export type SyncStatus = "loading" | "synced" | "saving" | "offline" | "error";
 
 const CACHE_KEY = "eisenpaper.v1";
-/** set while the cached sheet has never been reconciled with tasks.json */
-const UNSYNCED_KEY = "eisenpaper.v1.unsynced";
+/**
+ * The tasks.json text the cached sheet descends from: the base of the next
+ * merge. Always written together with CACHE_KEY by the same tab, so the
+ * pair stays consistent when several tabs share them.
+ */
+const BASE_KEY = "eisenpaper.v1.base";
 const ENDPOINT = "tasks.json";
 const WRITE_DELAY_MS = 300;
 /** browsers cap the bodies of all keepalive requests in flight at 64 KiB
  * (of UTF-8, not UTF-16) together */
 const KEEPALIVE_LIMIT = 60_000;
+/** merges to retry when tasks.json keeps changing under a save */
+const MAX_CONFLICT_RETRIES = 3;
 
-/** The cached sheet, or an empty one that is flagged as never synced. */
+/** The cached sheet, or an empty one. */
 function loadCache(): Sheet {
   const raw = localStorage.getItem(CACHE_KEY);
-  const cached = raw === null ? null : parseSheet(raw);
-  if (cached !== null) return cached;
-  localStorage.setItem(UNSYNCED_KEY, "1");
-  return emptySheet();
+  return (raw === null ? null : parseSheet(raw)) ?? emptySheet();
 }
 
 /**
  * The sheet plus its sync to the server. The server's tasks.json is the
  * source of truth; localStorage is an offline cache. Every persistent
  * mutation funnels through `commit()`.
+ *
+ * Saves are conditional: a PUT names the tasks.json version (ETag) the
+ * sheet was merged with, so one that missed another device's save gets a
+ * 412 instead of overwriting it, and is merged with that save and retried.
  */
 class SheetStore {
   sheet = $state<Sheet>(loadCache());
@@ -48,11 +56,10 @@ class SheetStore {
   /** the selected task, gone once it leaves the sheet */
   selected = $derived(this.sheet.tasks.find((t) => t.id === this.selectedId));
 
-  /** never reconciled with tasks.json, so no base to overwrite it with */
-  #unsynced = localStorage.getItem(UNSYNCED_KEY) !== null;
-  /** the last GET failed, so tasks.json may hold edits we have not seen */
-  #serverFailed = false;
-  #lastServerText: string | null = null;
+  /** tasks.json as last seen on the server; null = never seen, or none there */
+  #lastServerText: string | null = localStorage.getItem(BASE_KEY);
+  /** ETag of #lastServerText; null = none known, so only create (If-None-Match) */
+  #etag: string | null = null;
   #writeTimer: number | undefined;
   /** UTF-8 body bytes of our keepalive PUTs still in flight */
   #keepaliveBytes = 0;
@@ -61,21 +68,24 @@ class SheetStore {
     return JSON.stringify($state.snapshot(this.sheet), null, 2);
   }
 
-  commit(): void {
-    this.sheet.savedAt = Date.now();
+  /** Caches the sheet together with the server text it descends from. */
+  #persist(): void {
     localStorage.setItem(CACHE_KEY, this.#serialize());
+    if (this.#lastServerText === null) localStorage.removeItem(BASE_KEY);
+    else localStorage.setItem(BASE_KEY, this.#lastServerText);
+  }
+
+  commit(): void {
+    this.#persist();
     clearTimeout(this.#writeTimer);
     this.#writeTimer = window.setTimeout(() => {
       this.#writeTimer = undefined;
-      void this.#write();
+      void this.#write(MAX_CONFLICT_RETRIES);
     }, WRITE_DELAY_MS);
   }
 
-  async #write(): Promise<void> {
-    if (this.#unsynced || this.#serverFailed) {
-      await this.sync(); // merges into the server's sheet first
-      return;
-    }
+  /** Saves the sheet over the tasks.json version it was merged with. */
+  async #write(retries: number): Promise<void> {
     const text = this.#serialize();
     if (text === this.#lastServerText) {
       this.status = "synced";
@@ -85,31 +95,55 @@ class SheetStore {
     const bytes = new TextEncoder().encode(text).length;
     const keepalive = this.#keepaliveBytes + bytes < KEEPALIVE_LIMIT;
     if (keepalive) this.#keepaliveBytes += bytes;
+    let res: Response;
     try {
-      const res = await fetch(ENDPOINT, {
+      res = await fetch(ENDPOINT, {
         method: "PUT",
-        headers: { "content-type": "application/json" },
+        headers: {
+          "content-type": "application/json",
+          ...(this.#etag === null
+            ? { "if-none-match": "*" }
+            : { "if-match": this.#etag }),
+        },
         body: text,
         keepalive,
       });
-      if (!res.ok) {
-        console.error(`saving the sheet failed: HTTP ${String(res.status)}`);
-        this.status = "error";
-        return;
-      }
-      this.#lastServerText = text;
-      this.status = "synced";
     } catch (e) {
       console.warn("server unreachable, sheet kept in browser", e);
       this.status = "offline";
+      return;
     } finally {
       if (keepalive) this.#keepaliveBytes -= bytes;
     }
+    if (res.status === 412) {
+      // another device saved first: merge with its sheet, then save again
+      if (retries > 0) {
+        await this.#pull(retries - 1);
+        return;
+      }
+      console.error("tasks.json kept changing during the save");
+      this.status = "error";
+      return;
+    }
+    if (!res.ok) {
+      console.error(`saving the sheet failed: HTTP ${String(res.status)}`);
+      this.status = "error";
+      return;
+    }
+    this.#etag = res.headers.get("etag");
+    this.#lastServerText = text;
+    this.#persist();
+    this.status = "synced";
   }
 
-  /** Pull tasks.json; adopt it if newer, otherwise push ours over it. */
+  /** Pull tasks.json, merge it with the local sheet, push the result if it differs. */
   async sync(): Promise<void> {
+    await this.#pull(MAX_CONFLICT_RETRIES);
+  }
+
+  async #pull(retries: number): Promise<void> {
     if (this.editingId !== null || this.draft !== null) return; // never yank a note mid-edit
+    const base = this.#lastServerText;
     let res: Response;
     try {
       res = await fetch(ENDPOINT, { cache: "no-store" });
@@ -121,24 +155,27 @@ class SheetStore {
       this.status = "offline"; // not served by the eisenpaper server
       return;
     }
-    if (res.status === 404) {
-      this.#serverFailed = false;
-      this.#markSynced(); // nothing on the server to lose
-      this.#lastServerText = null; // no sheet on disk yet — create it
-      await this.#write();
-      return;
-    }
-    if (!res.ok) {
-      this.#serverFailed = true; // a sheet may exist: never save blind over it
+    if (res.status !== 404 && !res.ok) {
       this.status = "error";
       return;
     }
-    this.#serverFailed = false;
-    const text = await res.text();
-    if (text === this.#lastServerText) {
+    const text = res.status === 404 ? null : await res.text();
+    // a save of ours landed while the GET was in flight: this response may
+    // predate it, and taking its version would only fail our next If-Match
+    if (this.#lastServerText !== base) return;
+    if (text === null) {
+      // no sheet on disk yet: ours becomes it
+      this.#etag = null;
+      this.#lastServerText = null;
+      this.#persist();
+      await this.#write(retries);
+      return;
+    }
+    if (text === base) {
       // server unchanged since our last sync: push any local edits whose
       // save failed (#write reports "synced" when there are none)
-      await this.#write();
+      this.#etag = res.headers.get("etag");
+      await this.#write(retries);
       return;
     }
     const remote = parseSheet(text);
@@ -150,41 +187,25 @@ class SheetStore {
       return;
     }
     // an edit may have begun while the GET was in flight; leave
-    // #lastServerText alone so the next sync weighs this sheet again
+    // #lastServerText alone so the next sync merges this sheet again
     // eslint-disable-next-line @typescript-eslint/no-unnecessary-condition -- both may change during the awaits above
     if (this.editingId !== null || this.draft !== null) return;
+    const merged = mergeSheets(
+      (base === null ? null : parseSheet(base)) ?? emptySheet(),
+      $state.snapshot(this.sheet),
+      remote,
+    );
+    this.#etag = res.headers.get("etag");
     this.#lastServerText = text;
-    const unsynced = this.#unsynced;
-    this.#markSynced();
-    const local = $state.snapshot(this.sheet);
-    if (
-      unsynced &&
-      (local.tasks.length > 0 ||
-        local.archive.length > 0 ||
-        (local.projects?.length ?? 0) > 0)
-    ) {
-      // everything here was written without ever seeing the server's
-      // sheet: add it to that sheet rather than replace it
-      const projects = [...(remote.projects ?? []), ...(local.projects ?? [])];
-      this.sheet = {
-        ...remote,
-        tasks: [...remote.tasks, ...local.tasks],
-        archive: [...remote.archive, ...local.archive],
-        ...(projects.length > 0 ? { projects } : {}),
-      };
-      this.commit();
-    } else if (unsynced || reconcile(local, remote) === "adopt") {
+    if (sameJson(merged, remote)) {
       this.sheet = remote;
-      localStorage.setItem(CACHE_KEY, text);
+      this.#persist();
       this.status = "synced";
     } else {
-      await this.#write();
+      this.sheet = merged;
+      this.#persist();
+      await this.#write(retries);
     }
-  }
-
-  #markSynced(): void {
-    this.#unsynced = false;
-    localStorage.removeItem(UNSYNCED_KEY);
   }
 
   /** Initial sync plus window listeners; returns the teardown. */
@@ -197,7 +218,7 @@ class SheetStore {
       ) {
         clearTimeout(this.#writeTimer);
         this.#writeTimer = undefined;
-        void this.#write();
+        void this.#write(MAX_CONFLICT_RETRIES);
       }
     };
     addEventListener("focus", onFocus);

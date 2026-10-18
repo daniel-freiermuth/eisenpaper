@@ -3,10 +3,10 @@ import { describe, expect, it } from "vitest";
 import {
   clampPosition,
   freshSheet,
+  mergeSheets,
   nextProjectColor,
   parseSheet,
   PROJECT_COLORS,
-  reconcile,
   splitAlpha,
   tintColor,
   withAlpha,
@@ -96,24 +96,136 @@ describe("parseSheet", () => {
   });
 });
 
-describe("reconcile", () => {
-  const sheet = (savedAt?: number): Sheet =>
-    savedAt === undefined
-      ? { tasks: [], archive: [] }
-      : { tasks: [], archive: [], savedAt };
+describe("mergeSheets", () => {
+  const sheet = (tasks: Task[], archive: Sheet["archive"] = []): Sheet => ({
+    tasks,
+    archive,
+  });
+  const a = task({ id: "a", text: "file tax return" });
+  const b = task({ id: "b", text: "call the plumber" });
+  const base = sheet([a, b]);
 
-  it("adopts a newer remote", () => {
-    expect(reconcile(sheet(1), sheet(2))).toBe("adopt");
+  it("keeps tasks added on either side, remote order first", () => {
+    const mine = task({ id: "mine" });
+    const theirs = task({ id: "theirs" });
+    const merged = mergeSheets(
+      base,
+      sheet([mine, a, b]),
+      sheet([a, theirs, b]),
+    );
+    expect(merged.tasks.map((t) => t.id)).toEqual(["a", "theirs", "b", "mine"]);
   });
-  it("pushes when local is strictly newer", () => {
-    expect(reconcile(sheet(2), sheet(1))).toBe("push");
+
+  it("keeps edits to different fields of one task from both sides", () => {
+    const merged = mergeSheets(
+      base,
+      sheet([{ ...a, done: true, doneAt: 7 }, b]),
+      sheet([{ ...a, x: 0.1, y: 0.9 }, b]),
+    );
+    expect(merged.tasks[0]).toEqual({
+      ...a,
+      done: true,
+      doneAt: 7,
+      x: 0.1,
+      y: 0.9,
+    });
   });
-  it("adopts on a tie, so the file on disk stays authoritative", () => {
-    expect(reconcile(sheet(3), sheet(3))).toBe("adopt");
+
+  it("lets the local value win only when both sides changed the same field", () => {
+    const merged = mergeSheets(
+      base,
+      sheet([{ ...a, text: "mine" }, b]),
+      sheet([
+        { ...a, text: "theirs" },
+        { ...b, text: "theirs too" },
+      ]),
+    );
+    expect(merged.tasks.map((t) => t.text)).toEqual(["mine", "theirs too"]);
   });
-  it("treats a missing timestamp as oldest", () => {
-    expect(reconcile(sheet(1), sheet())).toBe("push");
-    expect(reconcile(sheet(), sheet(1))).toBe("adopt");
+
+  it("drops a field one side removed and the other left alone", () => {
+    const scheduled = task({ id: "a", day: "2026-10-20", order: 0 });
+    const backlogged = task({ id: "a" });
+    const merged = mergeSheets(
+      sheet([scheduled]),
+      sheet([scheduled]),
+      sheet([backlogged]),
+    );
+    expect(merged.tasks).toEqual([backlogged]);
+  });
+
+  it("deletes a task removed on either side, unless the other side changed it", () => {
+    expect(mergeSheets(base, sheet([b]), sheet([a, b])).tasks).toEqual([b]);
+    expect(mergeSheets(base, sheet([a, b]), sheet([b])).tasks).toEqual([b]);
+    const edited = { ...a, text: "still needed" };
+    expect(mergeSheets(base, sheet([edited, b]), sheet([b])).tasks).toEqual([
+      b,
+      edited,
+    ]);
+  });
+
+  it("merges fresh sheets run on both sides without losing either archive", () => {
+    const doneA = { ...a, done: true };
+    const doneB = { ...b, done: true };
+    const merged = mergeSheets(
+      sheet([doneA, doneB]),
+      sheet([doneB], [{ at: 1, tasks: [doneA] }]),
+      sheet([doneA], [{ at: 2, tasks: [doneB] }]),
+    );
+    expect(merged.tasks).toEqual([]);
+    expect(merged.archive.map((e) => e.at)).toEqual([2, 1]);
+  });
+
+  it("without a base, keeps everything from both sides", () => {
+    const mine = { ...a, text: "mine" };
+    const merged = mergeSheets(sheet([]), sheet([mine]), sheet([a, b]));
+    expect(merged.tasks).toEqual([mine, b]);
+  });
+
+  it("returns the remote sheet unchanged when nothing changed locally", () => {
+    const remote = sheet([{ ...a, text: "theirs" }, task({ id: "c" })]);
+    expect(mergeSheets(base, base, remote)).toEqual(remote);
+  });
+
+  it("merges projects by id, keeping additions and edits from both sides", () => {
+    const garden = { id: "g", name: "garden", color: "#2f5d9e" };
+    const work = { id: "w", name: "work" };
+    const old = { id: "o", name: "old" };
+    const merged = mergeSheets(
+      { ...base, projects: [garden, work, old] },
+      {
+        ...base,
+        projects: [
+          { ...garden, name: "yard" },
+          work,
+          { id: "m", name: "mine" },
+        ],
+      },
+      {
+        ...base,
+        projects: [
+          { ...garden, color: "#2a7f7a" },
+          work,
+          old,
+          { id: "t", name: "theirs" },
+        ],
+      },
+    );
+    expect(merged.projects).toEqual([
+      { id: "g", name: "yard", color: "#2a7f7a" },
+      work,
+      { id: "t", name: "theirs" },
+      { id: "m", name: "mine" },
+    ]);
+  });
+
+  it("merges fields it does not know, so newer clients' data survives", () => {
+    const merged = mergeSheets(
+      { ...base, theme: "dark" },
+      { ...base, theme: "dark", pinned: ["a"] },
+      { ...base, theme: "light" },
+    );
+    expect(merged).toMatchObject({ theme: "light", pinned: ["a"] });
   });
 });
 
