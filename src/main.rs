@@ -1,7 +1,10 @@
 //! eisenpaper server: serves the built web app and owns the sheet file.
 //!
-//! `GET /tasks.json` returns the sheet, `PUT /tasks.json` replaces it
-//! atomically. Every other `GET` is a file from the web directory.
+//! `GET /tasks.json` returns the sheet with an `ETag`; `PUT /tasks.json`
+//! replaces it atomically, but only if its `If-Match` names the sheet's
+//! current `ETag` (or `If-None-Match: *` while there is no sheet), so a
+//! client that missed another device's save gets a 412 instead of
+//! overwriting it. Every other `GET` is a file from the web directory.
 
 use std::fs;
 use std::io::{self, Write as _};
@@ -12,8 +15,8 @@ use std::time::Duration;
 
 use axum::body::Bytes;
 use axum::extract::{DefaultBodyLimit, FromRequest, Request, State};
-use axum::http::header::{CACHE_CONTROL, CONTENT_TYPE};
-use axum::http::{HeaderName, HeaderValue, StatusCode, Uri};
+use axum::http::header::{CACHE_CONTROL, CONTENT_TYPE, ETAG, IF_MATCH, IF_NONE_MATCH};
+use axum::http::{HeaderMap, HeaderName, HeaderValue, StatusCode, Uri};
 use axum::response::{IntoResponse, Response};
 use axum::routing::get;
 use axum::{Extension, Router};
@@ -170,16 +173,72 @@ async fn get_static(State(cfg): State<Arc<Config>>, uri: Uri) -> Response {
     serve_static(&cfg.web, uri.path())
 }
 
-/// `GET /tasks.json`: the sheet, or a marked 404 so the app knows it may PUT.
+/// The sheet's entity tag (RFC 9110 §8.8.3): a quoted FNV-1a hash of its
+/// bytes. Derived from the content, it stays valid across restarts and
+/// changes whenever anything (another device, Syncthing, an editor)
+/// rewrites the file.
+#[expect(
+    clippy::expect_used,
+    reason = "16 hex digits in quotes are always a valid header value"
+)]
+fn etag(bytes: &[u8]) -> HeaderValue {
+    let hash = bytes.iter().fold(0xcbf2_9ce4_8422_2325_u64, |h, &b| {
+        (h ^ u64::from(b)).wrapping_mul(0x0100_0000_01b3)
+    });
+    HeaderValue::try_from(format!("\"{hash:016x}\"")).expect("hex is a valid header value")
+}
+
+/// Whether a comma-separated entity-tag list names `current` (`*` names any
+/// existing sheet). Weak tags never match: `If-Match` compares strongly.
+fn names(list: &HeaderValue, current: Option<&HeaderValue>) -> bool {
+    let Some(current) = current else {
+        return false;
+    };
+    let Ok(list) = list.to_str() else {
+        return false;
+    };
+    list.split(',')
+        .map(str::trim)
+        .any(|tag| tag == "*" || tag.as_bytes() == current.as_bytes())
+}
+
+/// Checks a PUT's preconditions against the current sheet's tag (`None` =
+/// no sheet), per RFC 9110 §13.2.2. A PUT without any is refused with 428
+/// (RFC 6585): that is a blind overwrite of whatever another device saved.
+fn precondition(headers: &HeaderMap, current: Option<&HeaderValue>) -> Result<(), StatusCode> {
+    let ok = if let Some(if_match) = headers.get(IF_MATCH) {
+        names(if_match, current)
+    } else if let Some(if_none_match) = headers.get(IF_NONE_MATCH) {
+        // weak comparison, but our tags are never weak: same test
+        !names(if_none_match, current)
+    } else {
+        return Err(StatusCode::PRECONDITION_REQUIRED);
+    };
+    if ok {
+        Ok(())
+    } else {
+        Err(StatusCode::PRECONDITION_FAILED)
+    }
+}
+
+/// Reads the sheet; `Ok(None)` if there is none yet.
+fn read_sheet(data: &Path) -> io::Result<Option<Vec<u8>>> {
+    match fs::read(data) {
+        Ok(bytes) => Ok(Some(bytes)),
+        Err(e) if e.kind() == io::ErrorKind::NotFound => Ok(None),
+        Err(e) => Err(e),
+    }
+}
+
+/// `GET /tasks.json`: the sheet and its `ETag`, or a marked 404 so the app
+/// knows it may create one.
 ///
 /// Only a missing file is a 404: any other read failure is a marked 500, so
 /// the app shows an error instead of creating a sheet over the existing one.
 async fn get_sheet(State(cfg): State<Arc<Config>>) -> Response {
-    let bytes = match fs::read(&cfg.data) {
-        Ok(bytes) => bytes,
-        Err(e) if e.kind() == io::ErrorKind::NotFound => {
-            return (StatusCode::NOT_FOUND, [MARKER]).into_response();
-        }
+    let bytes = match read_sheet(&cfg.data) {
+        Ok(Some(bytes)) => bytes,
+        Ok(None) => return (StatusCode::NOT_FOUND, [MARKER]).into_response(),
         Err(e) => {
             eprintln!("reading {} failed: {e}", cfg.data.display());
             return (StatusCode::INTERNAL_SERVER_ERROR, [MARKER]).into_response();
@@ -190,6 +249,7 @@ async fn get_sheet(State(cfg): State<Arc<Config>>) -> Response {
             MARKER,
             (CONTENT_TYPE, HeaderValue::from_static("application/json")),
             (CACHE_CONTROL, HeaderValue::from_static("no-store")),
+            (ETAG, etag(&bytes)),
         ],
         bytes,
     )
@@ -264,13 +324,47 @@ fn write_sheet(data: &Path, body: &[u8]) -> Result<(), PutError> {
         .map_err(PutError::Io)
 }
 
+/// Replaces the sheet with `body` if the request's preconditions hold for
+/// the sheet on disk right now; returns the new `ETag`, or the status to
+/// refuse with plus the current `ETag` (if there is a sheet).
+///
+/// Synchronous on purpose: no other handler can run between the check and
+/// the write (see [`app`]), so two uploads cannot both pass the same check.
+fn store_sheet(
+    data: &Path,
+    headers: &HeaderMap,
+    body: &[u8],
+) -> Result<HeaderValue, (StatusCode, Option<HeaderValue>)> {
+    let current = match read_sheet(data) {
+        Ok(bytes) => bytes.map(|b| etag(&b)),
+        Err(e) => {
+            eprintln!("reading {} failed: {e}", data.display());
+            return Err((StatusCode::INTERNAL_SERVER_ERROR, None));
+        }
+    };
+    if let Err(status) = precondition(headers, current.as_ref()) {
+        return Err((status, current));
+    }
+    match write_sheet(data, body) {
+        Ok(()) => Ok(etag(body)),
+        Err(PutError::InvalidSheet) => Err((StatusCode::BAD_REQUEST, None)),
+        Err(PutError::Io(e)) => {
+            eprintln!("writing {} failed: {e}", data.display());
+            Err((StatusCode::INTERNAL_SERVER_ERROR, None))
+        }
+    }
+}
+
 /// `PUT /tasks.json`: stores a body of at most [`MAX_SHEET_BYTES`], read
-/// while holding one of the [`MAX_UPLOADS`] slots, all within [`BODY_TIMEOUT`].
+/// while holding one of the [`MAX_UPLOADS`] slots, all within [`BODY_TIMEOUT`],
+/// if its `If-Match`/`If-None-Match` still holds (see [`store_sheet`]).
+/// Success and 412 both carry the sheet's current `ETag`.
 async fn put_sheet(
     State(cfg): State<Arc<Config>>,
     Extension(uploads): Extension<Arc<Semaphore>>,
     request: Request,
 ) -> Response {
+    let headers = request.headers().clone();
     let upload = async {
         // the semaphore is never closed, so this only waits for a free slot
         let Ok(slot) = uploads.acquire().await else {
@@ -282,20 +376,18 @@ async fn put_sheet(
             .map_err(|rejection| rejection.status())?;
         Ok((slot, body))
     };
-    let status = match tokio::time::timeout(BODY_TIMEOUT, upload).await {
-        Err(_elapsed) => StatusCode::REQUEST_TIMEOUT,
-        Ok(Err(status)) => status,
+    let (status, tag) = match tokio::time::timeout(BODY_TIMEOUT, upload).await {
+        Err(_elapsed) => (StatusCode::REQUEST_TIMEOUT, None),
+        Ok(Err(status)) => (status, None),
         // the slot is held until the buffered body is written and dropped
-        Ok(Ok((_slot, body))) => match write_sheet(&cfg.data, &body) {
-            Ok(()) => StatusCode::NO_CONTENT,
-            Err(PutError::InvalidSheet) => StatusCode::BAD_REQUEST,
-            Err(PutError::Io(e)) => {
-                eprintln!("writing {} failed: {e}", cfg.data.display());
-                StatusCode::INTERNAL_SERVER_ERROR
-            }
+        Ok(Ok((_slot, body))) => match store_sheet(&cfg.data, &headers, &body) {
+            Ok(tag) => (StatusCode::NO_CONTENT, Some(tag)),
+            Err(refusal) => refusal,
         },
     };
-    (status, [MARKER]).into_response()
+    let mut res = (status, [MARKER]).into_response();
+    res.headers_mut().extend(tag.map(|tag| (ETAG, tag)));
+    res
 }
 
 /// The routes; any other method gets a 405.
@@ -401,6 +493,27 @@ mod tests {
         app.clone().oneshot(req).await.unwrap()
     }
 
+    /// PUTs `body` to the sheet with one precondition header.
+    async fn put(app: &Router, precondition: (&str, &str), body: &[u8]) -> Response {
+        let req = Request::builder()
+            .method("PUT")
+            .uri("/tasks.json")
+            .header(precondition.0, precondition.1)
+            .body(Body::from(body.to_vec()))
+            .unwrap();
+        app.clone().oneshot(req).await.unwrap()
+    }
+
+    /// The response's `ETag`, as a string.
+    fn tag_of(res: &Response) -> String {
+        res.headers()[ETAG].to_str().unwrap().to_owned()
+    }
+
+    /// A distinct, valid sheet for each `n`.
+    fn version(n: u8) -> Vec<u8> {
+        format!(r#"{{"tasks":[{n}],"archive":[]}}"#).into_bytes()
+    }
+
     /// In-memory connections for `axum::serve`. Without sockets, paused time
     /// only skips ahead once the server is really waiting.
     struct Pipes(tokio::sync::mpsc::UnboundedReceiver<DuplexStream>);
@@ -489,7 +602,7 @@ mod tests {
         tokio::time::sleep(Duration::from_secs(1)).await;
         let mut conn = send(
             &server,
-            b"PUT /tasks.json HTTP/1.1\r\nHost: x\r\nContent-Length: 25\r\n\r\n{\"tasks\":[],\"archive\":[]}",
+            b"PUT /tasks.json HTTP/1.1\r\nHost: x\r\nIf-None-Match: *\r\nContent-Length: 25\r\n\r\n{\"tasks\":[],\"archive\":[]}",
         )
         .await;
         let res = response(&mut conn).await;
@@ -662,14 +775,20 @@ mod tests {
         assert_eq!(res.status(), StatusCode::NOT_FOUND);
         assert_eq!(res.headers()["x-eisenpaper"], "1");
         let sheet = br#"{"tasks":[],"archive":[]}"#;
-        let res = call(&app, "PUT", "/tasks.json", sheet.to_vec()).await;
+        let res = put(&app, ("if-none-match", "*"), sheet).await;
         assert_eq!(res.status(), StatusCode::NO_CONTENT);
         assert_eq!(res.headers()["x-eisenpaper"], "1");
+        let created = tag_of(&res);
         let res = call(&app, "GET", "/tasks.json?t=1", Vec::new()).await;
         assert_eq!(res.status(), StatusCode::OK);
         assert_eq!(res.headers()["x-eisenpaper"], "1");
         assert_eq!(res.headers()["cache-control"], "no-store");
         assert_eq!(res.headers()["content-type"], "application/json");
+        assert_eq!(
+            tag_of(&res),
+            created,
+            "GET must name the sheet the PUT stored"
+        );
         let body = to_bytes(res.into_body(), usize::MAX).await.unwrap();
         assert_eq!(body, &sheet[..]);
     }
@@ -689,7 +808,13 @@ mod tests {
     #[tokio::test]
     async fn put_with_query_string_still_writes_the_sheet() {
         let (app, data) = scratch_app("put-query");
-        let res = call(&app, "PUT", "/tasks.json?x=1", EMPTY_SHEET.to_vec()).await;
+        let req = Request::builder()
+            .method("PUT")
+            .uri("/tasks.json?x=1")
+            .header("if-none-match", "*")
+            .body(Body::from(EMPTY_SHEET))
+            .unwrap();
+        let res = app.oneshot(req).await.unwrap();
         assert_eq!(res.status(), StatusCode::NO_CONTENT);
         assert_eq!(fs::read(&data).unwrap(), EMPTY_SHEET);
     }
@@ -716,6 +841,68 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn put_without_a_precondition_is_refused_with_428() {
+        let (app, data) = scratch_app("blind");
+        let res = call(&app, "PUT", "/tasks.json", version(1)).await;
+        assert_eq!(res.status(), StatusCode::PRECONDITION_REQUIRED);
+        assert_eq!(res.headers()["x-eisenpaper"], "1");
+        assert!(!data.exists());
+        fs::write(&data, version(1)).unwrap();
+        let res = call(&app, "PUT", "/tasks.json", version(2)).await;
+        assert_eq!(res.status(), StatusCode::PRECONDITION_REQUIRED);
+        assert_eq!(fs::read(&data).unwrap(), version(1));
+    }
+
+    #[tokio::test]
+    async fn put_over_a_sheet_it_never_saw_is_refused_with_the_current_etag() {
+        let (app, data) = scratch_app("stale");
+        let res = put(&app, ("if-none-match", "*"), &version(1)).await;
+        let first = tag_of(&res);
+        // a second device saves over the first version
+        let res = put(&app, ("if-match", &first), &version(2)).await;
+        assert_eq!(res.status(), StatusCode::NO_CONTENT);
+        let second = tag_of(&res);
+        assert_ne!(second, first);
+        // the first device, still holding `first`, must not overwrite it
+        let res = put(&app, ("if-match", &first), &version(3)).await;
+        assert_eq!(res.status(), StatusCode::PRECONDITION_FAILED);
+        assert_eq!(res.headers()["x-eisenpaper"], "1");
+        assert_eq!(tag_of(&res), second);
+        // nor may anyone create a sheet that already exists
+        let res = put(&app, ("if-none-match", "*"), &version(3)).await;
+        assert_eq!(res.status(), StatusCode::PRECONDITION_FAILED);
+        assert_eq!(fs::read(&data).unwrap(), version(2));
+        // a weak tag never matches, even when its opaque part does
+        let weak = format!("W/{second}");
+        let res = put(&app, ("if-match", &weak), &version(3)).await;
+        assert_eq!(res.status(), StatusCode::PRECONDITION_FAILED);
+        // any tag in a list may match
+        let list = format!("{first}, {second}");
+        let res = put(&app, ("if-match", &list), &version(3)).await;
+        assert_eq!(res.status(), StatusCode::NO_CONTENT);
+    }
+
+    #[tokio::test]
+    async fn a_sheet_rewritten_on_disk_invalidates_its_old_etag() {
+        let (app, data) = scratch_app("synced-file");
+        fs::write(&data, version(1)).unwrap();
+        let seen = tag_of(&call(&app, "GET", "/tasks.json", Vec::new()).await);
+        // Syncthing (or an editor) replaces the file behind the server's back
+        fs::write(&data, version(9)).unwrap();
+        let res = put(&app, ("if-match", &seen), &version(2)).await;
+        assert_eq!(res.status(), StatusCode::PRECONDITION_FAILED);
+        assert_eq!(fs::read(&data).unwrap(), version(9));
+    }
+
+    #[tokio::test]
+    async fn if_match_star_needs_an_existing_sheet() {
+        let (app, data) = scratch_app("star");
+        let res = put(&app, ("if-match", "*"), &version(1)).await;
+        assert_eq!(res.status(), StatusCode::PRECONDITION_FAILED);
+        assert!(!data.exists());
+    }
+
+    #[tokio::test]
     async fn unreadable_sheet_is_a_marked_500_not_a_404() {
         let (app, data) = scratch_app("unreadable");
         // the sheet exists but cannot be read; a 404 would make the app overwrite it
@@ -733,10 +920,10 @@ mod tests {
         let mut sheet = vec![b'x'; MAX_SHEET_BYTES];
         sheet[..head.len()].copy_from_slice(head);
         sheet[MAX_SHEET_BYTES - 2..].copy_from_slice(br#""}"#);
-        let res = call(&app, "PUT", "/tasks.json", sheet.clone()).await;
+        let res = put(&app, ("if-none-match", "*"), &sheet).await;
         assert_eq!(res.status(), StatusCode::NO_CONTENT);
         sheet.insert(head.len(), b'x');
-        let res = call(&app, "PUT", "/tasks.json", sheet).await;
+        let res = put(&app, ("if-match", "*"), &sheet).await;
         assert_eq!(res.status(), StatusCode::PAYLOAD_TOO_LARGE);
         assert_eq!(res.headers()["x-eisenpaper"], "1");
         assert_eq!(fs::read(&data).unwrap().len(), MAX_SHEET_BYTES);
@@ -746,7 +933,7 @@ mod tests {
     async fn put_of_invalid_json_is_a_marked_400_and_keeps_the_sheet() {
         let (app, data) = scratch_app("put-invalid");
         fs::write(&data, r#"{"tasks":[]}"#).unwrap();
-        let res = call(&app, "PUT", "/tasks.json", b"not json{{".to_vec()).await;
+        let res = put(&app, ("if-match", "*"), b"not json{{").await;
         assert_eq!(res.status(), StatusCode::BAD_REQUEST);
         assert_eq!(res.headers()["x-eisenpaper"], "1");
         assert_eq!(fs::read_to_string(&data).unwrap(), r#"{"tasks":[]}"#);
@@ -757,12 +944,18 @@ mod tests {
         let (app, data) = scratch_app("put-rename");
         // the temp file can be written, but renaming a file onto a directory fails
         fs::create_dir_all(&data).unwrap();
-        let res = call(&app, "PUT", "/tasks.json", EMPTY_SHEET.to_vec()).await;
+        // a stray temp file would be synced next to the real sheet
+        let tmp = data.with_file_name(".tasks.json.tmp");
+        assert!(matches!(
+            write_sheet(&data, EMPTY_SHEET),
+            Err(PutError::Io(_))
+        ));
+        assert!(!tmp.exists(), "{} left behind", tmp.display());
+        // over HTTP, reading the directory for its ETag already fails
+        let res = put(&app, ("if-match", "*"), EMPTY_SHEET).await;
         assert_eq!(res.status(), StatusCode::INTERNAL_SERVER_ERROR);
         assert_eq!(res.headers()["x-eisenpaper"], "1");
         assert!(data.is_dir());
-        // a stray temp file would be synced next to the real sheet
-        let tmp = data.with_file_name(".tasks.json.tmp");
         assert!(!tmp.exists(), "{} left behind", tmp.display());
     }
 
