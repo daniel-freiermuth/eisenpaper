@@ -199,6 +199,30 @@ describe("SheetStore.sync", () => {
     expect(puts()).toHaveLength(0);
   });
 
+  it("does not save over a sheet the server failed to read", async () => {
+    storage.set(CACHE_KEY, localText(5)); // a device that has synced before
+    const store = await loadStore();
+    fetchMock.mockImplementation(serve(() => reply(500)));
+    await store.sync();
+    expect(store.status).toBe("error");
+
+    const task = store.sheet.tasks[0];
+    if (task === undefined) throw new Error("cached sheet not loaded");
+    store.toggleDone(task);
+    await vi.advanceTimersByTimeAsync(300);
+
+    expect(puts()).toHaveLength(0);
+    expect(store.status).toBe("error");
+
+    // once tasks.json is readable again the edit is weighed against it
+    fetchMock.mockReset();
+    fetchMock.mockImplementation(server(204));
+    await store.sync();
+
+    expect(putBodies()).toMatchObject([{ tasks: [{ id: "t2", done: true }] }]);
+    expect(store.status).toBe("synced");
+  });
+
   it("adopts a newer server sheet and caches it for the next reload", async () => {
     storage.set(CACHE_KEY, localText(5)); // server savedAt is 10
     const store = await loadStore();
