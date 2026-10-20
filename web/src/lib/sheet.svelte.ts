@@ -183,7 +183,6 @@ class SheetStore {
       console.error(
         "tasks.json is not a valid sheet — keeping the current one",
       );
-      this.#serverFailed = true; // never save blind over a sheet we can't read
       this.status = "error";
       return;
     }

@@ -254,10 +254,14 @@ describe("SheetStore.sync", () => {
   });
 
   it("does not save over a tasks.json that is not a valid sheet", async () => {
-    storage.set(CACHE_KEY, localText(5)); // a device that has synced before
+    storage.set(CACHE_KEY, localText);
+    storage.set(BASE_KEY, emptyText); // a device that has synced before
     const store = await loadStore();
-    const corrupt = JSON.stringify({ tasks: "nope", archive: [], savedAt: 99 });
-    fetchMock.mockImplementation(serve(() => reply(200, corrupt)));
+    const corrupt = JSON.stringify({ tasks: "nope", archive: [] });
+    // tasks.json exists and PUT checks against it, so only its ETag could
+    // replace it, and that ETag is never adopted from an unreadable sheet
+    const tasks = fakeServer(corrupt);
+    fetchMock.mockImplementation(tasks.handle);
     await store.sync();
     expect(store.status).toBe("error");
 
@@ -266,7 +270,7 @@ describe("SheetStore.sync", () => {
     store.toggleDone(task);
     await vi.advanceTimersByTimeAsync(300);
 
-    expect(puts()).toHaveLength(0);
+    expect(tasks.sheet()).toEqual(JSON.parse(corrupt));
     expect(store.status).toBe("error");
   });
 
