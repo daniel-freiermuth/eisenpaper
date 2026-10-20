@@ -9,6 +9,9 @@ import {
 } from "vitest";
 
 import type { Sheet, Task } from "./model";
+import type { store as sheetStore } from "./sheet.svelte";
+
+type Store = typeof sheetStore;
 
 const serverTask: Task = {
   id: "t1",
@@ -532,5 +535,152 @@ describe("SheetStore.start", () => {
     store.toggleDone(firstTask(store));
     setVisibility("hidden");
     expect(fetchMock).not.toHaveBeenCalled();
+  });
+});
+
+describe("SheetStore edit lifecycle", () => {
+  const plumber: Task = {
+    id: "t2",
+    text: "call the plumber",
+    x: 0.2,
+    y: 0.3,
+    done: false,
+    created: 2,
+  };
+  const cachedText = JSON.stringify(
+    { tasks: [serverTask, plumber], archive: [], savedAt: 5 },
+    null,
+    2,
+  );
+
+  /** A store loaded from its cache, so not unsynced: every commit PUTs directly. */
+  async function editingStore() {
+    storage.set(CACHE_KEY, cachedText);
+    vi.setSystemTime(1000);
+    const store = await loadStore();
+    fetchMock.mockImplementation(server(204));
+    return store;
+  }
+
+  function sheetTask(store: Store, id: string): Task {
+    const task = store.sheet.tasks.find((t) => t.id === id);
+    if (task === undefined) throw new Error(`no task ${id}`);
+    return task;
+  }
+
+  /** Nothing committed: sheet, cache and server all as loaded. */
+  async function expectUncommitted(store: Store): Promise<void> {
+    await vi.advanceTimersByTimeAsync(300);
+    expect(store.exportText()).toBe(cachedText);
+    expect(storage.get(CACHE_KEY)).toBe(cachedText);
+    expect(fetchMock).not.toHaveBeenCalled();
+  }
+
+  it.each(["", "  \n\t "])(
+    "drops a draft finished with no text without saving (%j)",
+    async (text) => {
+      const store = await editingStore();
+      store.addDraft(0.5, 0.5);
+      const draft = store.draft;
+      if (draft === null) throw new Error("no draft");
+      store.finishEdit(draft, text);
+
+      expect(store.draft).toBeNull();
+      expect(store.editingId).toBeNull();
+      await expectUncommitted(store);
+    },
+  );
+
+  it("appends a finished draft with its text trimmed and saves it", async () => {
+    const store = await editingStore();
+    store.addDraft(0.4, 0.6);
+    const draft = store.draft;
+    if (draft === null) throw new Error("no draft");
+    vi.setSystemTime(2000);
+    store.finishEdit(draft, "  buy milk \n");
+
+    expect(store.draft).toBeNull();
+    expect(store.editingId).toBeNull();
+    const added = { id: draft.id, text: "buy milk", x: 0.4, y: 0.6 };
+    expect(store.sheet.tasks).toMatchObject([
+      { id: "t1" },
+      { id: "t2" },
+      added,
+    ]);
+    expect(store.sheet.savedAt).toBe(2000);
+    expect(storage.get(CACHE_KEY)).toBe(store.exportText());
+
+    await vi.advanceTimersByTimeAsync(300);
+    expect(putBodies()).toMatchObject([
+      { tasks: [{ id: "t1" }, { id: "t2" }, added], savedAt: 2000 },
+    ]);
+  });
+
+  it("removes only the note whose text was emptied, and saves that", async () => {
+    const store = await editingStore();
+    const task = sheetTask(store, "t2");
+    store.startEdit(task);
+    vi.setSystemTime(2000);
+    store.finishEdit(task, " \n ");
+
+    expect(store.editingId).toBeNull();
+    expect(store.sheet.tasks).toEqual([serverTask]);
+    expect(store.sheet.savedAt).toBe(2000);
+
+    await vi.advanceTimersByTimeAsync(300);
+    expect(putBodies()).toEqual([
+      { tasks: [serverTask], archive: [], savedAt: 2000 },
+    ]);
+  });
+
+  it("updates an edited note in place with its text trimmed", async () => {
+    const store = await editingStore();
+    const task = sheetTask(store, "t2");
+    store.startEdit(task);
+    vi.setSystemTime(2000);
+    store.finishEdit(task, "\tcall the plumber today  ");
+
+    expect(store.editingId).toBeNull();
+    const edited = { ...plumber, text: "call the plumber today" };
+    expect(store.sheet.tasks).toEqual([serverTask, edited]);
+
+    await vi.advanceTimersByTimeAsync(300);
+    expect(putBodies()).toEqual([
+      { tasks: [serverTask, edited], archive: [], savedAt: 2000 },
+    ]);
+  });
+
+  it("cancels a draft without adding or saving anything", async () => {
+    const store = await editingStore();
+    store.addDraft(0.5, 0.5);
+    store.cancelEdit();
+
+    expect(store.draft).toBeNull();
+    await expectUncommitted(store);
+  });
+
+  it("cancels editing a note without changing or saving anything", async () => {
+    const store = await editingStore();
+    store.startEdit(sheetTask(store, "t2"));
+    store.cancelEdit();
+
+    expect(store.editingId).toBeNull();
+    await expectUncommitted(store);
+  });
+
+  it("clamps a new draft into the pane and ends any edit in progress", async () => {
+    const store = await editingStore();
+    store.startEdit(sheetTask(store, "t2"));
+    store.addDraft(-1, 2);
+
+    expect(store.editingId).toBeNull();
+    expect(store.draft).toMatchObject({
+      text: "",
+      x: 0.02,
+      y: 0.97,
+      done: false,
+    });
+    expect(store.draft?.id).not.toBe("t2");
+    await expectUncommitted(store);
   });
 });
