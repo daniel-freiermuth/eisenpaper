@@ -7,6 +7,7 @@ import {
   nextProjectColor,
   parseSheet,
   PROJECT_COLORS,
+  rotation,
   splitAlpha,
   tintColor,
   withAlpha,
@@ -332,5 +333,13 @@ describe("project colour alpha", () => {
     expect(withAlpha("#000000", -1)).toBe("#00000000");
     expect(splitAlpha("red")).toBeNull();
     expect(splitAlpha("#abc")).toBeNull();
+  });
+});
+
+describe("rotation", () => {
+  it("stays within ±1.8deg even when the id hash is negative", () => {
+    for (const id of ["aaaaaaaa", "zzzzzzzz", "note-1"]) {
+      expect(Math.abs(parseFloat(rotation(id)))).toBeLessThanOrEqual(1.8);
+    }
   });
 });
