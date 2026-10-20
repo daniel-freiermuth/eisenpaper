@@ -75,6 +75,17 @@ describe("parseSheet", () => {
         ],
       }),
     ],
+    [
+      "two projects sharing an id",
+      JSON.stringify({
+        tasks: [],
+        archive: [],
+        projects: [
+          { id: "p", name: "garden" },
+          { id: "p", name: "work" },
+        ],
+      }),
+    ],
   ])("rejects %s", (_name, text) => {
     expect(parseSheet(text)).toBeNull();
   });

@@ -3,6 +3,13 @@ import * as v from "valibot";
 // Schemas are loose: unknown fields (from a newer client) survive a
 // round-trip through an older tab instead of being silently stripped.
 
+/** A label tasks can be filed under; managed in the settings panel. */
+export const ProjectSchema = v.looseObject({
+  id: v.string(),
+  name: v.string(),
+});
+export type Project = v.InferOutput<typeof ProjectSchema>;
+
 /** One scrap on the sheet. Positions are normalized to the pane (0..1). */
 export const TaskSchema = v.looseObject({
   id: v.string(),
@@ -18,6 +25,8 @@ export const TaskSchema = v.looseObject({
   day: v.optional(v.pipe(v.string(), v.isoDate())),
   /** position within its day; meaningless without `day` */
   order: v.optional(v.number()),
+  /** id of the task's project; absent = none */
+  project: v.optional(v.string()),
   /** free-text annotations; absent = none */
   note: v.optional(v.string()),
 });
@@ -49,6 +58,13 @@ export const SheetSchema = v.looseObject({
   archive: v.pipe(
     v.array(ArchivedSheetSchema),
     uniqueBy((a: ArchivedSheet) => a.at),
+  ),
+  /** absent on sheets written before projects existed */
+  projects: v.optional(
+    v.pipe(
+      v.array(ProjectSchema),
+      uniqueBy((p: Project) => p.id),
+    ),
   ),
   /** ms timestamp of the last local change; newer side wins on sync */
   savedAt: v.optional(v.number()),

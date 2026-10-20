@@ -12,6 +12,10 @@
   }
   const { task, label, unschedulable = false }: Props = $props();
 
+  const project = $derived(
+    store.sheet.projects?.find((p) => p.id === task.project),
+  );
+
   /** buttons inside the scrap must neither lift it nor select it */
   const stop = (e: Event): void => {
     e.stopPropagation();
@@ -56,6 +60,9 @@
 >
   <!-- the inline span keeps the strike-through to the words, line by line -->
   <span class="body"><span class="txt">{task.text}</span></span>
+  {#if project !== undefined}
+    <span class="project" title="project">{project.name}</span>
+  {/if}
   {#if label !== undefined}
     <span class="when">{label}</span>
   {/if}
@@ -117,6 +124,16 @@
 
   .scrap:not(:hover, :focus-within, .selected) .check {
     visibility: hidden;
+  }
+
+  .project {
+    flex: none;
+    font-size: 14px;
+    color: var(--pencil);
+  }
+
+  .project::before {
+    content: "#";
   }
 
   .lifted {

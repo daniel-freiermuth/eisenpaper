@@ -4,6 +4,11 @@
   import { store } from "./sheet.svelte";
   import { today } from "./today.svelte";
 
+  interface Props {
+    onManageProjects: () => void;
+  }
+  const { onManageProjects }: Props = $props();
+
   const task = $derived(store.selected);
   const open = $derived(task !== undefined);
 
@@ -56,6 +61,26 @@
       >
       <button class="danger" onclick={tearOff}>tear off</button>
     </div>
+
+    <section>
+      <h3><label for="detail-project">project</label></h3>
+      <div class="row">
+        <select
+          id="detail-project"
+          value={task.project ?? ""}
+          onchange={(e) => {
+            const id = e.currentTarget.value;
+            store.setProject(task, id === "" ? null : id);
+          }}
+        >
+          <option value="">— none —</option>
+          {#each store.sheet.projects ?? [] as project (project.id)}
+            <option value={project.id}>{project.name}</option>
+          {/each}
+        </select>
+        <button onclick={onManageProjects}>manage…</button>
+      </div>
+    </section>
 
     <section>
       <h3>
@@ -125,7 +150,7 @@
     box-shadow: -4px 0 18px rgb(43 42 38 / 15%);
     transform: translateX(105%);
     transition: transform 0.2s ease;
-    z-index: 28; /* under the archive panel */
+    z-index: 28; /* under the archive and settings panels */
     padding: 18px;
     overflow-y: auto;
   }
@@ -172,6 +197,11 @@
     flex-wrap: wrap;
     gap: 6px;
     margin-bottom: 6px;
+  }
+
+  select {
+    flex: 1;
+    min-width: 0;
   }
 
   .active {

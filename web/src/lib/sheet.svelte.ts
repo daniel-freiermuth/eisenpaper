@@ -148,13 +148,20 @@ class SheetStore {
     const unsynced = this.#unsynced;
     this.#markSynced();
     const local = $state.snapshot(this.sheet);
-    if (unsynced && (local.tasks.length > 0 || local.archive.length > 0)) {
+    if (
+      unsynced &&
+      (local.tasks.length > 0 ||
+        local.archive.length > 0 ||
+        (local.projects?.length ?? 0) > 0)
+    ) {
       // everything here was written without ever seeing the server's
       // sheet: add it to that sheet rather than replace it
+      const projects = [...(remote.projects ?? []), ...(local.projects ?? [])];
       this.sheet = {
         ...remote,
         tasks: [...remote.tasks, ...local.tasks],
         archive: [...remote.archive, ...local.archive],
+        ...(projects.length > 0 ? { projects } : {}),
       };
       this.commit();
     } else if (unsynced || reconcile(local, remote) === "adopt") {
@@ -257,10 +264,57 @@ class SheetStore {
     this.selectedId = id;
   }
 
+  /** File `task` under a project, or under none when `projectId` is null. */
+  setProject(task: Task, projectId: string | null): void {
+    if (projectId === null) delete task.project;
+    else task.project = projectId;
+    this.commit();
+  }
+
   /** An emptied note is dropped; anything else is kept as typed. */
   setNote(task: Task, note: string): void {
     if (note === "") delete task.note;
     else task.note = note;
+    this.commit();
+  }
+
+  /** Project names are unique ignoring case; blank or taken names are refused. */
+  #nameFree(name: string, except?: string): boolean {
+    const key = name.toLocaleLowerCase();
+    return (
+      name !== "" &&
+      !(this.sheet.projects ?? []).some(
+        (p) => p.id !== except && p.name.toLocaleLowerCase() === key,
+      )
+    );
+  }
+
+  /** Returns the new project's id, or null when the name is blank or taken. */
+  addProject(rawName: string): string | null {
+    const name = rawName.trim();
+    if (!this.#nameFree(name)) return null;
+    const id = newId();
+    (this.sheet.projects ??= []).push({ id, name });
+    this.commit();
+    return id;
+  }
+
+  /** Returns false when the name is blank or taken by another project. */
+  renameProject(id: string, rawName: string): boolean {
+    const name = rawName.trim();
+    const project = this.sheet.projects?.find((p) => p.id === id);
+    if (project === undefined || !this.#nameFree(name, id)) return false;
+    project.name = name;
+    this.commit();
+    return true;
+  }
+
+  /** Deletes a project; its open-sheet tasks keep going, without a project. */
+  removeProject(id: string): void {
+    this.sheet.projects = (this.sheet.projects ?? []).filter(
+      (p) => p.id !== id,
+    );
+    for (const t of this.sheet.tasks) if (t.project === id) delete t.project;
     this.commit();
   }
 

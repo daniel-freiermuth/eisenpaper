@@ -77,7 +77,7 @@ beforeEach(() => {
   vi.stubGlobal("confirm", confirm);
   toolbar = mount(Toolbar, {
     target: document.body,
-    props: { onOpenArchive: () => undefined },
+    props: { onOpenArchive: () => undefined, onOpenSettings: () => undefined },
   });
   flushSync();
 });

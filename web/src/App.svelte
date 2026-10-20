@@ -6,6 +6,7 @@
   import PaneTabs from "./lib/PaneTabs.svelte";
   import PriorityPane from "./lib/PriorityPane.svelte";
   import SchedulePane from "./lib/SchedulePane.svelte";
+  import SettingsPanel from "./lib/SettingsPanel.svelte";
   import { store } from "./lib/sheet.svelte";
   import { today } from "./lib/today.svelte";
   import Toolbar from "./lib/Toolbar.svelte";
@@ -14,6 +15,7 @@
   const PANE_KEY = "eisenpaper.pane";
 
   let archiveOpen = $state(false);
+  let settingsOpen = $state(false);
   let pane = $state(
     localStorage.getItem(PANE_KEY) === "schedule"
       ? ("schedule" as const)
@@ -49,6 +51,10 @@
   <SchedulePane />
 {/if}
 
-<DetailPane />
-<Toolbar onOpenArchive={() => (archiveOpen = true)} />
+<DetailPane onManageProjects={() => (settingsOpen = true)} />
+<Toolbar
+  onOpenArchive={() => (archiveOpen = true)}
+  onOpenSettings={() => (settingsOpen = true)}
+/>
 <ArchivePanel bind:open={archiveOpen} />
+<SettingsPanel bind:open={settingsOpen} />
