@@ -97,8 +97,9 @@ usage: eisenpaper [--host H] [--port P] [--web DIR] [--data FILE]
   it; `PUT /tasks.json` replaces it atomically (fsynced temp file + rename),
   so a crash, a power loss or a file syncer such as Syncthing never sees half
   a sheet. If `tasks.json` is a symlink — say into a Syncthing folder — the
-  file it points at is updated and the link kept. Uploads that are not a
-  sheet are refused; the stored body is otherwise kept byte for byte.
+  file it points at is updated (or created, if it does not exist yet) and the
+  link kept. Uploads that are not a sheet are refused; the stored body is
+  otherwise kept byte for byte.
 - Every change is cached in the browser right away and written to the
   server shortly after. If the server is unreachable, the toolbar shows
   _offline_ and the edits are pushed once it is back.

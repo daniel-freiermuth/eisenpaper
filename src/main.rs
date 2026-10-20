@@ -222,6 +222,22 @@ enum PutError {
     Io(io::Error),
 }
 
+/// Follows `data` while it is a symlink, even when the final target does not
+/// exist yet. A relative target is relative to the link's directory.
+fn resolve_links(data: &Path) -> Result<PathBuf, PutError> {
+    let mut path = data.to_path_buf();
+    // the kernel's own limit on links followed in a single lookup
+    for _ in 0..40 {
+        match fs::read_link(&path) {
+            Ok(target) => path = path.parent().unwrap_or_else(|| Path::new("")).join(target),
+            Err(_) => return Ok(path),
+        }
+    }
+    Err(PutError::Io(io::Error::other(
+        "too many levels of symbolic links",
+    )))
+}
+
 /// Writes the sheet atomically (temp file + rename) after validating it, so
 /// a crash or a concurrent reader (Syncthing) never sees a partial sheet.
 ///
@@ -233,9 +249,11 @@ fn write_sheet(data: &Path, body: &[u8]) -> Result<(), PutError> {
         return Err(PutError::InvalidSheet);
     }
     // rename replaces a symlink rather than writing through it, so write next
-    // to and over the file it points at (e.g. a link into a Syncthing folder)
-    let resolved = fs::canonicalize(data);
-    let data = resolved.as_deref().unwrap_or(data);
+    // to and over the file it points at (e.g. a link into a Syncthing folder).
+    // Links are followed by hand: canonicalize fails on a link whose target
+    // does not exist yet, which is exactly the first write into a sync folder.
+    let data = resolve_links(data)?;
+    let data = data.as_path();
     let name = data
         .file_name()
         .ok_or_else(|| PutError::Io(io::Error::other("data path has no file name")))?;
