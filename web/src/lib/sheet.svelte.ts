@@ -156,12 +156,22 @@ class SheetStore {
         (local.projects?.length ?? 0) > 0)
     ) {
       // everything here was written without ever seeing the server's
-      // sheet: add it to that sheet rather than replace it
+      // sheet: add it to that sheet rather than replace it. Keys the server
+      // already has (an imported backup, another tab's merge) stay as the
+      // server has them: the renderer and parseSheet reject duplicate keys.
+      const taskIds = new Set(remote.tasks.map((t) => t.id));
+      const archiveAts = new Set(remote.archive.map((a) => a.at));
       const projects = [...(remote.projects ?? []), ...(local.projects ?? [])];
       this.sheet = {
         ...remote,
-        tasks: [...remote.tasks, ...local.tasks],
-        archive: [...remote.archive, ...local.archive],
+        tasks: [
+          ...remote.tasks,
+          ...local.tasks.filter((t) => !taskIds.has(t.id)),
+        ],
+        archive: [
+          ...remote.archive,
+          ...local.archive.filter((a) => !archiveAts.has(a.at)),
+        ],
         ...(projects.length > 0 ? { projects } : {}),
       };
       this.commit();
