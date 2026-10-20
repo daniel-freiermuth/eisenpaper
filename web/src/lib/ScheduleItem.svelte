@@ -18,6 +18,8 @@
   }
 
   function onkeydown(e: KeyboardEvent): void {
+    // keys on the × button are the button's own, not a tap on the scrap
+    if (e.target !== e.currentTarget) return;
     if (e.key === " " || e.key === "Enter") {
       e.preventDefault();
       store.toggleDone(task);
@@ -50,11 +52,14 @@
     <span class="when">{label}</span>
   {/if}
   {#if unschedulable}
+    <!-- a capture handler is attached natively, so it stops the press before
+         the scrap's own pointerdown listener can turn it into a tap; a plain
+         onpointerdown is delegated to the root and would run too late -->
     <button
       class="unschedule"
       title="unschedule — back to the backlog"
       aria-label="unschedule"
-      onpointerdown={(e) => {
+      onpointerdowncapture={(e) => {
         e.stopPropagation();
       }}
       onclick={() => {
