@@ -217,6 +217,24 @@ describe("SheetStore.sync", () => {
     expect(storage.get(CACHE_KEY)).toBe(localText);
   });
 
+  it("goes offline when the connection drops while reading tasks.json", async () => {
+    storage.set(CACHE_KEY, localText);
+    const store = await loadStore();
+    const dropped = new ReadableStream({
+      start(c) {
+        c.error(new TypeError("network error"));
+      },
+    });
+    fetchMock.mockResolvedValue(
+      new Response(dropped, { status: 200, headers: { "x-eisenpaper": "1" } }),
+    );
+    await store.sync();
+
+    expect(store.status).toBe("offline");
+    expect(store.exportText()).toBe(localText);
+    expect(puts()).toHaveLength(0);
+  });
+
   it("creates tasks.json from the local sheet when the server has none", async () => {
     storage.set(CACHE_KEY, localText);
     const tasks = fakeServer(null);
