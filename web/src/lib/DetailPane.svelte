@@ -1,5 +1,6 @@
 <script lang="ts">
   import { drag } from "./drag.svelte";
+  import { tintStyle } from "./tint";
   import { addDays, dueLabel } from "./schedule";
   import { store } from "./sheet.svelte";
   import { today } from "./today.svelte";
@@ -11,6 +12,9 @@
 
   const task = $derived(store.selected);
   const open = $derived(task !== undefined);
+  const projectColor = $derived(
+    store.sheet.projects?.find((p) => p.id === task?.project)?.color,
+  );
 
   const QUICK: { label: string; days: number }[] = [
     { label: "today", days: 0 },
@@ -68,6 +72,8 @@
         <select
           id="detail-project"
           value={task.project ?? ""}
+          class:tinted={projectColor !== undefined}
+          style={tintStyle(projectColor)}
           onchange={(e) => {
             const id = e.currentTarget.value;
             store.setProject(task, id === "" ? null : id);
@@ -75,7 +81,11 @@
         >
           <option value="">— none —</option>
           {#each store.sheet.projects ?? [] as project (project.id)}
-            <option value={project.id}>{project.name}</option>
+            <option
+              value={project.id}
+              class:tinted={project.color !== undefined}
+              style={tintStyle(project.color)}>{project.name}</option
+            >
           {/each}
         </select>
         <button onclick={onManageProjects}>manage…</button>
@@ -202,6 +212,11 @@
   select {
     flex: 1;
     min-width: 0;
+  }
+
+  .tinted {
+    background: var(--t-open-bg);
+    color: var(--t-open-fg);
   }
 
   .active {

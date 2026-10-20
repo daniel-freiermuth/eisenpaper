@@ -7,8 +7,63 @@ import * as v from "valibot";
 export const ProjectSchema = v.looseObject({
   id: v.string(),
   name: v.string(),
+  /** a PROJECT_COLORS entry, or a picked #rrggbbaa; absent = no tint */
+  color: v.optional(v.string()),
 });
 export type Project = v.InferOutput<typeof ProjectSchema>;
+
+/** Ink colours that stay readable on the paper background. */
+export const PROJECT_COLORS = [
+  "#2f5d9e", // blue
+  "#2a7f7a", // teal
+  "#4f7a2a", // green
+  "#9a7b16", // ochre
+  "#b5562b", // rust
+  "#a23b72", // plum
+  "#7a4a9e", // violet
+  "#5a6470", // slate
+] as const;
+
+/** The first palette colour no project uses yet; cycles once all are taken. */
+export function nextProjectColor(projects: readonly Project[]): string {
+  const used = new Set(projects.map((p) => p.color));
+  return (
+    PROJECT_COLORS.find((c) => !used.has(c)) ??
+    PROJECT_COLORS[projects.length % PROJECT_COLORS.length] ??
+    PROJECT_COLORS[0]
+  );
+}
+
+/** How strongly an opaque (#rrggbb) project colour tints a task. */
+export const DEFAULT_TINT_ALPHA = 0.28;
+
+/**
+ * The colour a task's background is tinted with. Opaque #rrggbb colours
+ * (the palette) get the default strength; a picked #rrggbbaa keeps its own.
+ */
+export function tintColor(color: string): string {
+  return /^#[0-9a-f]{6}$/i.test(color)
+    ? withAlpha(color, DEFAULT_TINT_ALPHA)
+    : color;
+}
+
+/** #rrggbb or #rrggbbaa → opaque #rrggbb plus alpha (0..1); null otherwise. */
+export function splitAlpha(
+  color: string,
+): { rgb: string; alpha: number } | null {
+  const m = /^(#[0-9a-f]{6})([0-9a-f]{2})?$/i.exec(color);
+  if (m?.[1] === undefined) return null;
+  return {
+    rgb: m[1].toLowerCase(),
+    alpha: m[2] === undefined ? 1 : parseInt(m[2], 16) / 255,
+  };
+}
+
+/** #rrggbb plus alpha (clamped to 0..1) → #rrggbbaa. */
+export function withAlpha(rgb: string, alpha: number): string {
+  const a = Math.round(Math.min(1, Math.max(0, alpha)) * 255);
+  return rgb.toLowerCase() + a.toString(16).padStart(2, "0");
+}
 
 /** One scrap on the sheet. Positions are normalized to the pane (0..1). */
 export const TaskSchema = v.looseObject({

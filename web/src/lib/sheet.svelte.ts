@@ -3,6 +3,7 @@ import {
   emptySheet,
   freshSheet,
   newId,
+  nextProjectColor,
   parseSheet,
   reconcile,
   type Sheet,
@@ -294,7 +295,8 @@ class SheetStore {
     const name = rawName.trim();
     if (!this.#nameFree(name)) return null;
     const id = newId();
-    (this.sheet.projects ??= []).push({ id, name });
+    const projects = (this.sheet.projects ??= []);
+    projects.push({ id, name, color: nextProjectColor(projects) });
     this.commit();
     return id;
   }
@@ -307,6 +309,15 @@ class SheetStore {
     project.name = name;
     this.commit();
     return true;
+  }
+
+  /** Any CSS colour; null makes the project colourless again. */
+  setProjectColor(id: string, color: string | null): void {
+    const project = this.sheet.projects?.find((p) => p.id === id);
+    if (project === undefined) return;
+    if (color === null) delete project.color;
+    else project.color = color;
+    this.commit();
   }
 
   /** Deletes a project; its open-sheet tasks keep going, without a project. */
