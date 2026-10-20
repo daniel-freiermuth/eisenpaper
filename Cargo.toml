@@ -5,6 +5,7 @@ edition = "2024"
 rust-version = "1.85"
 description = "serves the eisenpaper sheet and owns tasks.json"
 repository = "https://github.com/daniel-freiermuth/eisenpaper"
+license = "Parity-7.0.0"
 publish = false
 
 [dependencies]
