@@ -1,6 +1,7 @@
 {
   "name": "eisenpaper-web",
   "private": true,
+  "license": "Parity-7.0.0",
   "type": "module",
   "scripts": {
     "dev": "vite",
