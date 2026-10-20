@@ -77,7 +77,18 @@ export const TaskSchema = v.looseObject({
   created: v.number(),
   doneAt: v.optional(v.number()),
   /** scheduled local date, YYYY-MM-DD; absent = backlog */
-  day: v.optional(v.pipe(v.string(), v.isoDate())),
+  day: v.optional(
+    v.pipe(
+      v.string(),
+      v.isoDate(),
+      // isoDate checks only the format; "2026-11-31" must not pass.
+      v.check((s) => {
+        const [y, m, d] = s.split("-").map(Number) as [number, number, number];
+        const date = new Date(y, m - 1, d);
+        return date.getMonth() === m - 1 && date.getDate() === d;
+      }, "Invalid calendar date"),
+    ),
+  ),
   /** position within its day; meaningless without `day` */
   order: v.optional(v.number()),
   /** id of the task's project; absent = none */

@@ -151,7 +151,10 @@ describe("sheet schema", () => {
     }
   });
   it("accepts a leap day", () => {
-    const text = JSON.stringify({ tasks: [task("a", { day: "2028-02-29" })], archive: [] });
+    const text = JSON.stringify({
+      tasks: [task("a", { day: "2028-02-29" })],
+      archive: [],
+    });
     expect(parseSheet(text)?.tasks[0]?.day).toBe("2028-02-29");
   });
 });
