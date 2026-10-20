@@ -642,7 +642,7 @@ mod tests {
 
     #[test]
     fn write_sheet_through_a_symlink_updates_the_target_and_keeps_the_link() {
-        let dir = scratch("symlink");
+        let dir = scratch("write-symlink");
         let target = dir.join("synced.json");
         fs::write(&target, br#"{"tasks":[]}"#).unwrap();
         let data = dir.join("tasks.json");
