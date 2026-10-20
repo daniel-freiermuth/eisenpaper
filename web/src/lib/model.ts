@@ -299,5 +299,5 @@ export function newId(): string {
 export function rotation(id: string): string {
   let h = 0;
   for (const c of id) h = (h * 31 + c.charCodeAt(0)) | 0;
-  return (((h % 100) / 100) * 3.6 - 1.8).toFixed(2) + "deg";
+  return (((((h % 100) + 100) % 100) / 100) * 3.6 - 1.8).toFixed(2) + "deg";
 }
