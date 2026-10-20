@@ -799,6 +799,18 @@ mod tests {
         assert_eq!(fs::read_to_string(&target).unwrap(), sheet);
     }
 
+    #[test]
+    fn write_sheet_keeps_the_existing_sheets_permissions() {
+        use std::os::unix::fs::PermissionsExt as _;
+        let dir = scratch("mode");
+        let data = dir.join("tasks.json");
+        fs::write(&data, EMPTY_SHEET).unwrap();
+        fs::set_permissions(&data, fs::Permissions::from_mode(0o600)).unwrap();
+        write_sheet(&data, EMPTY_SHEET).unwrap();
+        let mode = fs::metadata(&data).unwrap().permissions().mode() & 0o777;
+        assert_eq!(mode, 0o600, "mode became {mode:o}");
+    }
+
     #[tokio::test]
     async fn sheet_responses_carry_the_marker_the_app_looks_for() {
         let (app, _) = scratch_app("marker");
