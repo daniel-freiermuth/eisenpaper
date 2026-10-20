@@ -342,3 +342,171 @@ describe("SheetStore.sync", () => {
     expect(store.sheet.tasks).toEqual([]);
   });
 });
+
+/** A store that has adopted `serverSheet`, with the fetch log cleared. */
+async function syncedStore() {
+  const store = await loadStore();
+  fetchMock.mockImplementation(server(204));
+  await store.sync();
+  expect(store.status).toBe("synced");
+  fetchMock.mockClear();
+  return store;
+}
+
+function firstTask(store: { sheet: Sheet }): Task {
+  const task = store.sheet.tasks[0];
+  if (task === undefined) throw new Error("server sheet not adopted");
+  return task;
+}
+
+describe("SheetStore.commit", () => {
+  it("coalesces commits within the write delay into one PUT of the final state", async () => {
+    const store = await syncedStore();
+    const task = firstTask(store);
+
+    store.toggleDone(task);
+    await vi.advanceTimersByTimeAsync(200);
+    store.finishEdit(task, "file tax return today"); // re-arms the delay
+    await vi.advanceTimersByTimeAsync(299);
+    expect(puts()).toHaveLength(0);
+
+    await vi.advanceTimersByTimeAsync(1);
+    expect(putBodies()).toMatchObject([
+      { tasks: [{ id: "t1", done: true, text: "file tax return today" }] },
+    ]);
+
+    await vi.advanceTimersByTimeAsync(1000);
+    expect(puts()).toHaveLength(1);
+    expect(store.status).toBe("synced");
+  });
+
+  it("stamps savedAt and caches the sheet at once, even when the PUT fails", async () => {
+    const store = await syncedStore();
+    fetchMock.mockImplementation(server(500));
+    vi.setSystemTime(1234);
+
+    store.toggleDone(firstTask(store));
+
+    expect(fetchMock).not.toHaveBeenCalled();
+    expect(store.sheet.savedAt).toBe(1234);
+    const cached = (): unknown => JSON.parse(storage.get(CACHE_KEY) ?? "null");
+    expect(cached()).toMatchObject({
+      savedAt: 1234,
+      tasks: [{ id: "t1", done: true }],
+    });
+
+    await vi.advanceTimersByTimeAsync(300);
+    expect(puts()).toHaveLength(1);
+    expect(store.status).toBe("error");
+    expect(cached()).toMatchObject({
+      savedAt: 1234,
+      tasks: [{ id: "t1", done: true }],
+    });
+  });
+});
+
+describe("SheetStore.start", () => {
+  let win: EventTarget;
+  let doc: EventTarget & { visibilityState: DocumentVisibilityState };
+
+  beforeEach(() => {
+    win = new EventTarget();
+    vi.stubGlobal("addEventListener", win.addEventListener.bind(win));
+    vi.stubGlobal("removeEventListener", win.removeEventListener.bind(win));
+    doc = Object.assign<
+      EventTarget,
+      { visibilityState: DocumentVisibilityState }
+    >(new EventTarget(), { visibilityState: "visible" });
+    vi.stubGlobal("document", doc);
+  });
+
+  const setVisibility = (state: DocumentVisibilityState): void => {
+    doc.visibilityState = state;
+    doc.dispatchEvent(new Event("visibilitychange"));
+  };
+
+  /** A started store that has finished its initial sync. */
+  async function startedStore() {
+    const store = await loadStore();
+    fetchMock.mockImplementation(server(204));
+    const stop = store.start();
+    await vi.waitFor(() => {
+      expect(store.status).toBe("synced");
+    });
+    expect(fetchMock).toHaveBeenCalledTimes(1); // the initial GET
+    fetchMock.mockClear();
+    return { store, stop };
+  }
+
+  it("flushes a pending write the moment the page is hidden, and only once", async () => {
+    const { store } = await startedStore();
+    store.toggleDone(firstTask(store));
+    // the flushed PUT is still in flight when the debounce delay runs out
+    let resolvePut: (res: Response) => void = () => undefined;
+    fetchMock.mockReturnValueOnce(
+      new Promise<Response>((resolve) => (resolvePut = resolve)),
+    );
+
+    setVisibility("hidden");
+    expect(putBodies()).toMatchObject([{ tasks: [{ id: "t1", done: true }] }]);
+
+    await vi.advanceTimersByTimeAsync(1000);
+    expect(puts()).toHaveLength(1);
+    resolvePut(reply(204));
+    await vi.waitFor(() => {
+      expect(store.status).toBe("synced");
+    });
+    expect(puts()).toHaveLength(1);
+  });
+
+  it("does not write on hide when no write is pending", async () => {
+    const { store } = await startedStore();
+    setVisibility("hidden");
+    expect(fetchMock).not.toHaveBeenCalled();
+
+    // once the debounced write has gone out, hiding has nothing to flush;
+    // a failed save is retried by the next sync, not by every tab switch
+    setVisibility("visible");
+    fetchMock.mockImplementation(server(500));
+    store.toggleDone(firstTask(store));
+    await vi.advanceTimersByTimeAsync(300);
+    expect(puts()).toHaveLength(1);
+    expect(store.status).toBe("error");
+
+    setVisibility("hidden");
+    await vi.advanceTimersByTimeAsync(1000);
+    expect(puts()).toHaveLength(1);
+  });
+
+  it("leaves a pending write on its timer when the page becomes visible", async () => {
+    const { store } = await startedStore();
+    store.toggleDone(firstTask(store));
+
+    setVisibility("visible");
+    expect(fetchMock).not.toHaveBeenCalled();
+
+    await vi.advanceTimersByTimeAsync(300);
+    expect(putBodies()).toMatchObject([{ tasks: [{ id: "t1", done: true }] }]);
+  });
+
+  it("re-syncs with the server when the window regains focus", async () => {
+    const { store } = await startedStore();
+    win.dispatchEvent(new Event("focus"));
+
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    expect(fetchMock.mock.calls[0]?.[1]?.method).toBeUndefined(); // a GET
+    await vi.waitFor(() => {
+      expect(store.status).toBe("synced");
+    });
+  });
+
+  it("stops reacting to focus and hide once torn down", async () => {
+    const { store, stop } = await startedStore();
+    stop();
+
+    win.dispatchEvent(new Event("focus"));
+    store.toggleDone(firstTask(store));
+    setVisibility("hidden");
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+});
