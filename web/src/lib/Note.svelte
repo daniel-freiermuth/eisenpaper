@@ -97,6 +97,7 @@
   }
 
   function oncontextmenu(e: MouseEvent): void {
+    if (editing) return; // the text field's own menu: paste, spelling
     e.preventDefault();
     if (confirm(`tear off "${task.text}"?`)) store.remove(task);
   }
