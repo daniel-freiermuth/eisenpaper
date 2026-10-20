@@ -339,8 +339,9 @@ describe("SheetStore.sync", () => {
 
   it("merges a backup imported before the first sync into a sheet it can read back", async () => {
     const backup: Sheet = {
-      tasks: [serverTask],
+      tasks: [{ ...serverTask, project: "p1" }],
       archive: [{ at: 5, tasks: [{ ...serverTask, id: "t0", done: true }] }],
+      projects: [{ id: "p1", name: "taxes" }],
       savedAt: 10,
     };
     const backupText = JSON.stringify(backup, null, 2);
@@ -364,6 +365,7 @@ describe("SheetStore.sync", () => {
       expect(parseSheet(body)).toMatchObject({
         tasks: [{ id: "t1" }],
         archive: [{ at: 5 }],
+        projects: [{ id: "p1" }],
       });
     }
     expect(parseSheet(storage.get(CACHE_KEY) ?? "")).not.toBeNull();
