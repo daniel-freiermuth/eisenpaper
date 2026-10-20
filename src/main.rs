@@ -7,7 +7,8 @@ use std::fs;
 use std::io::{self, Write as _};
 use std::path::{Path, PathBuf};
 use std::process::ExitCode;
-use std::sync::Arc;
+use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::{Arc, Mutex, PoisonError};
 use std::time::Duration;
 
 use axum::body::Bytes;
@@ -222,6 +223,13 @@ enum PutError {
     Io(io::Error),
 }
 
+/// Refuses a body that is not a sheet.
+fn check_sheet(body: &[u8]) -> Result<(), PutError> {
+    serde_json::from_slice::<SheetShape>(body)
+        .map(drop)
+        .map_err(|_| PutError::InvalidSheet)
+}
+
 /// Writes the sheet atomically (temp file + rename) after validating it, so
 /// a crash or a concurrent reader (Syncthing) never sees a partial sheet.
 ///
@@ -229,9 +237,7 @@ enum PutError {
 /// otherwise a power loss can persist the rename but not the data, leaving
 /// an empty or truncated sheet in place of the old one.
 fn write_sheet(data: &Path, body: &[u8]) -> Result<(), PutError> {
-    if serde_json::from_slice::<SheetShape>(body).is_err() {
-        return Err(PutError::InvalidSheet);
-    }
+    check_sheet(body)?;
     // rename replaces a symlink rather than writing through it, so write next
     // to and over the file it points at (e.g. a link into a Syncthing folder)
     let resolved = fs::canonicalize(data);
@@ -264,13 +270,30 @@ fn write_sheet(data: &Path, body: &[u8]) -> Result<(), PutError> {
         .map_err(PutError::Io)
 }
 
+/// Keeps overlapping uploads in the order their requests arrived, not the
+/// order their bodies finished: a slow upload of an older sheet must not
+/// overwrite a newer one sent after it.
+#[derive(Default)]
+struct Arrivals {
+    /// Ticket of the next upload to arrive.
+    next: AtomicU64,
+    /// Ticket of the latest-arriving upload stored so far.
+    stored: Mutex<u64>,
+}
+
 /// `PUT /tasks.json`: stores a body of at most [`MAX_SHEET_BYTES`], read
 /// while holding one of the [`MAX_UPLOADS`] slots, all within [`BODY_TIMEOUT`].
+///
+/// A valid body is not stored if an upload that arrived after it already
+/// was: it is answered as if stored and at once replaced by that later one.
 async fn put_sheet(
     State(cfg): State<Arc<Config>>,
     Extension(uploads): Extension<Arc<Semaphore>>,
+    Extension(arrivals): Extension<Arc<Arrivals>>,
     request: Request,
 ) -> Response {
+    // taken once the request head is in, before its body is read
+    let ticket = arrivals.next.fetch_add(1, Ordering::Relaxed);
     let upload = async {
         // the semaphore is never closed, so this only waits for a free slot
         let Ok(slot) = uploads.acquire().await else {
@@ -286,14 +309,26 @@ async fn put_sheet(
         Err(_elapsed) => StatusCode::REQUEST_TIMEOUT,
         Ok(Err(status)) => status,
         // the slot is held until the buffered body is written and dropped
-        Ok(Ok((_slot, body))) => match write_sheet(&cfg.data, &body) {
-            Ok(()) => StatusCode::NO_CONTENT,
-            Err(PutError::InvalidSheet) => StatusCode::BAD_REQUEST,
-            Err(PutError::Io(e)) => {
-                eprintln!("writing {} failed: {e}", cfg.data.display());
-                StatusCode::INTERNAL_SERVER_ERROR
+        Ok(Ok((_slot, body))) => {
+            let mut stored = arrivals
+                .stored
+                .lock()
+                .unwrap_or_else(PoisonError::into_inner);
+            let result = if ticket < *stored {
+                check_sheet(&body)
+            } else {
+                write_sheet(&cfg.data, &body).inspect(|()| *stored = ticket)
+            };
+            drop(stored);
+            match result {
+                Ok(()) => StatusCode::NO_CONTENT,
+                Err(PutError::InvalidSheet) => StatusCode::BAD_REQUEST,
+                Err(PutError::Io(e)) => {
+                    eprintln!("writing {} failed: {e}", cfg.data.display());
+                    StatusCode::INTERNAL_SERVER_ERROR
+                }
             }
-        },
+        }
     };
     (status, [MARKER]).into_response()
 }
@@ -309,6 +344,7 @@ fn app(cfg: Arc<Config>) -> Router {
         .fallback(get(get_static))
         .layer(DefaultBodyLimit::max(MAX_SHEET_BYTES))
         .layer(Extension(Arc::new(Semaphore::new(MAX_UPLOADS))))
+        .layer(Extension(Arc::new(Arrivals::default())))
         .with_state(cfg)
 }
 
