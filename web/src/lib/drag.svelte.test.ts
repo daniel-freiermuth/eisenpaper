@@ -153,6 +153,30 @@ describe("edge auto-scroll while dragging a scrap", () => {
     expect(list.scrollTop).toBeGreaterThan(0);
     expect(days.scrollTop).toBe(0);
   });
+
+  it("makes a new drag picked up in an edge band dwell again", () => {
+    const days = el(".days");
+    layout(days, { top: 50, bottom: 600 }, 1500);
+    const list = el(".day-list");
+    layout(list, { top: 565, bottom: 595 }, 30);
+
+    // the first drag rests in the band and is dropped there
+    holdOverScheduledScrap();
+    pointer(window, "pointerup", OVER.x, OVER.y);
+    expect(drag.current).toBeNull();
+    days.scrollTop = 0;
+    vi.advanceTimersByTime(60_000);
+
+    // the next one is picked up right inside the same band
+    const scrap = el('[data-id="b1"]');
+    pointer(scrap, "pointerdown", OVER.x, OVER.y);
+    pointer(window, "pointermove", OVER.x, OVER.y - 10);
+    expect(drag.current?.id).toBe("b1");
+    vi.advanceTimersByTime(100); // still short of the edge dwell
+    flushSync();
+
+    expect(days.scrollTop).toBe(0);
+  });
 });
 
 describe("two fingers on two scraps", () => {
