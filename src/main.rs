@@ -524,6 +524,28 @@ mod tests {
         }
     }
 
+    #[tokio::test(start_paused = true)]
+    async fn overlapping_puts_keep_the_later_request_not_the_later_body() {
+        let (server, data) = spawn_server("overlap");
+        let put = |body: &str| {
+            let len = body.len();
+            format!("PUT /tasks.json HTTP/1.1\r\nHost: x\r\nContent-Length: {len}\r\n\r\n{body}")
+        };
+        let older = r#"{"tasks":[],"archive":[],"savedAt":1}"#;
+        let newer = r#"{"tasks":[],"archive":[],"savedAt":2}"#;
+        // the older sheet is sent first but is still uploading...
+        let slow_put = put(older);
+        let (sent, rest) = slow_put.split_at(slow_put.len() - older.len() / 2);
+        let mut slow = send(&server, sent.as_bytes()).await;
+        tokio::time::sleep(Duration::from_secs(1)).await;
+        // ...when the newer sheet arrives in full and is stored
+        let mut fast = send(&server, put(newer).as_bytes()).await;
+        assert!(response(&mut fast).await.starts_with("HTTP/1.1 204"));
+        slow.write_all(rest.as_bytes()).await.unwrap();
+        assert!(response(&mut slow).await.starts_with("HTTP/1.1 204"));
+        assert_eq!(fs::read_to_string(&data).unwrap(), newer);
+    }
+
     #[test]
     fn resolve_maps_root_to_index_and_nested_assets_inside_web() {
         let web = Path::new("/srv/web");
