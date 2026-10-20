@@ -662,6 +662,36 @@ mod tests {
         }
     }
 
+    /// Reads until the server closes `conn`, failing the test if it is
+    /// still open at the deadline.
+    async fn closed(conn: &mut DuplexStream) {
+        let mut rest = Vec::new();
+        let _len = tokio::time::timeout(BODY_TIMEOUT * 2, conn.read_to_end(&mut rest))
+            .await
+            .expect("connection still open at the deadline")
+            .unwrap();
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn connection_that_never_finishes_its_request_head_is_closed() {
+        let (server, _) = spawn_server("partial-head");
+        let mut conn = send(&server, b"PUT /tasks.json HTTP/1.1\r\n").await;
+        closed(&mut conn).await;
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn idle_keep_alive_connection_is_closed() {
+        let (server, _) = spawn_server("idle");
+        let mut conn = send(
+            &server,
+            b"PUT /tasks.json HTTP/1.1\r\nHost: x\r\nIf-None-Match: *\r\nContent-Length: 25\r\n\r\n{\"tasks\":[],\"archive\":[]}",
+        )
+        .await;
+        let res = response(&mut conn).await;
+        assert!(res.starts_with("HTTP/1.1 204"), "{res}");
+        closed(&mut conn).await;
+    }
+
     #[test]
     fn resolve_maps_root_to_index_and_nested_assets_inside_web() {
         let web = Path::new("/srv/web");
