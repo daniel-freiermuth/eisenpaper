@@ -296,6 +296,7 @@ class SheetStore {
     } else if (text === "") {
       this.#removeById(task.id);
     } else {
+      if (text === task.text) return; // nothing changed: nothing to save
       task.text = text;
     }
     this.commit();
