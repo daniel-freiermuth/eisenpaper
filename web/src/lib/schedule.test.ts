@@ -1,9 +1,10 @@
-import { describe, expect, it } from "vitest";
+import { afterAll, beforeAll, describe, expect, it } from "vitest";
 
 import { parseSheet, type Task } from "./model";
 import {
   addDays,
   backlog,
+  dayHeading,
   dueLabel,
   overdue,
   placeTask,
@@ -62,6 +63,37 @@ describe("overdue", () => {
     ];
     expect(ids(overdue(tasks, today))).toEqual(["lastweek", "yesterday"]);
   });
+  it("orders tasks sharing a past day by order, then created", () => {
+    const day = "2026-10-16";
+    const tasks = [
+      task("loose-late", { day, created: 5 }),
+      task("second", { day, order: 1 }),
+      task("loose-early", { day, created: 2 }),
+      task("first", { day, order: 0 }),
+    ];
+    expect(ids(overdue(tasks, today))).toEqual([
+      "first",
+      "second",
+      "loose-early",
+      "loose-late",
+    ]);
+  });
+});
+
+describe("tasksOn", () => {
+  it("puts tasks without an order last, falling back to created", () => {
+    const day = "2026-10-20";
+    const tasks = [
+      task("loose-late", { day, created: 9 }),
+      task("loose-early", { day, created: 3 }),
+      task("ordered", { day, order: 4 }),
+    ];
+    expect(ids(tasksOn(tasks, day))).toEqual([
+      "ordered",
+      "loose-early",
+      "loose-late",
+    ]);
+  });
 });
 
 describe("placeTask", () => {
@@ -106,6 +138,32 @@ describe("placeTask", () => {
     expect(ids(tasksOn(tasks, day))).toEqual(["a", "b"]);
   });
 
+  it("clamps a negative index to the top", () => {
+    const tasks = [task("a", { day, order: 0 }), task("b")];
+    placeTask(tasks, "b", day, -3);
+    expect(ids(tasksOn(tasks, day))).toEqual(["b", "a"]);
+  });
+
+  it("ignores an unknown id", () => {
+    const tasks = [task("a", { day, order: 0 }), task("b")];
+    const before = structuredClone(tasks);
+    placeTask(tasks, "gone", day, 0);
+    expect(tasks).toEqual(before);
+  });
+
+  it("renumbers crossed-out siblings and leaves other days alone", () => {
+    const other = "2026-10-21";
+    const tasks = [
+      task("open", { day, order: 3 }),
+      task("crossed", { day, order: 7, done: true }),
+      task("elsewhere", { day: other, order: 5 }),
+      task("new"),
+    ];
+    placeTask(tasks, "new", day, 1);
+    expect(ids(tasksOn(tasks, day))).toEqual(["open", "new", "crossed"]);
+    expect(tasks.map((t) => t.order)).toEqual([0, 2, 5, 1]);
+  });
+
   it("unschedules back to the backlog", () => {
     const tasks = [task("a", { day: "2026-10-01", order: 3 })];
     placeTask(tasks, "a", null, 0);
@@ -126,6 +184,31 @@ describe("dueLabel", () => {
     ["2027-01-05", "Tue, 5 Jan 2027"],
   ])("%s → %s", (day, label) => {
     expect(dueLabel(day, today)).toBe(label);
+  });
+});
+
+describe("dayHeading", () => {
+  // A negative UTC offset, where parsing a day key as UTC midnight would
+  // land on the previous local day and shift the weekday.
+  const tz = process.env["TZ"];
+  beforeAll(() => {
+    process.env["TZ"] = "America/Los_Angeles";
+  });
+  afterAll(() => {
+    if (tz === undefined) delete process.env["TZ"];
+    else process.env["TZ"] = tz;
+  });
+
+  const today = "2026-10-15"; // a Thursday
+  it.each([
+    ["2026-10-15", "today", "15 Oct", false],
+    ["2026-10-16", "tomorrow", "16 Oct", false],
+    ["2026-10-17", "Saturday", "17 Oct", true],
+    ["2026-10-18", "Sunday", "18 Oct", true],
+    ["2026-10-19", "Monday", "19 Oct", false],
+    ["2026-10-14", "Wednesday", "14 Oct", false],
+  ])("%s → %s %s", (day, name, date, weekend) => {
+    expect(dayHeading(day, today)).toEqual({ name, date, weekend });
   });
 });
 
