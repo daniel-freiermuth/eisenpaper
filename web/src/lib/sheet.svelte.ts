@@ -18,7 +18,8 @@ const CACHE_KEY = "eisenpaper.v1";
 const UNSYNCED_KEY = "eisenpaper.v1.unsynced";
 const ENDPOINT = "tasks.json";
 const WRITE_DELAY_MS = 300;
-/** browsers cap keepalive request bodies at 64 KiB (of UTF-8, not UTF-16) */
+/** browsers cap the bodies of all keepalive requests in flight at 64 KiB
+ * (of UTF-8, not UTF-16) together */
 const KEEPALIVE_LIMIT = 60_000;
 
 /** The cached sheet, or an empty one that is flagged as never synced. */
@@ -53,6 +54,8 @@ class SheetStore {
   #serverFailed = false;
   #lastServerText: string | null = null;
   #writeTimer: number | undefined;
+  /** UTF-8 body bytes of our keepalive PUTs still in flight */
+  #keepaliveBytes = 0;
 
   #serialize(): string {
     return JSON.stringify($state.snapshot(this.sheet), null, 2);
@@ -79,12 +82,15 @@ class SheetStore {
       return;
     }
     this.status = "saving";
+    const bytes = new TextEncoder().encode(text).length;
+    const keepalive = this.#keepaliveBytes + bytes < KEEPALIVE_LIMIT;
+    if (keepalive) this.#keepaliveBytes += bytes;
     try {
       const res = await fetch(ENDPOINT, {
         method: "PUT",
         headers: { "content-type": "application/json" },
         body: text,
-        keepalive: new TextEncoder().encode(text).length < KEEPALIVE_LIMIT,
+        keepalive,
       });
       if (!res.ok) {
         console.error(`saving the sheet failed: HTTP ${String(res.status)}`);
@@ -96,6 +102,8 @@ class SheetStore {
     } catch (e) {
       console.warn("server unreachable, sheet kept in browser", e);
       this.status = "offline";
+    } finally {
+      if (keepalive) this.#keepaliveBytes -= bytes;
     }
   }
 
