@@ -705,6 +705,35 @@ mod tests {
         );
     }
 
+    #[tokio::test]
+    async fn router_refuses_traversal_raw_or_percent_encoded() {
+        let (app, data) = scratch_app("traversal");
+        let dir = data.parent().unwrap();
+        fs::create_dir_all(dir.join("web/assets")).unwrap();
+        fs::write(dir.join("web/index.html"), "<!doctype html>").unwrap();
+        fs::write(dir.join("secret.txt"), "private").unwrap();
+        // the web dir is served, so the 404s below come from the traversal guard
+        let res = call(&app, "GET", "/", Vec::new()).await;
+        assert_eq!(res.status(), StatusCode::OK);
+        assert_eq!(res.headers()["content-type"], "text/html; charset=utf-8");
+        // the path is never percent-decoded: encoded dots and slashes name no file
+        for uri in [
+            "/../secret.txt",
+            "/assets/../../secret.txt",
+            "/%2e%2e/secret.txt",
+            "/assets/%2e%2e/%2e%2e/secret.txt",
+            "/%2E%2E/secret.txt",
+            "/..%2fsecret.txt",
+            "/%2e%2e%2fsecret.txt",
+            "/assets%2f..%2f..%2fsecret.txt",
+        ] {
+            let res = call(&app, "GET", uri, Vec::new()).await;
+            assert_eq!(res.status(), StatusCode::NOT_FOUND, "{uri}");
+            let body = to_bytes(res.into_body(), usize::MAX).await.unwrap();
+            assert!(body.is_empty(), "{uri} leaked {body:?}");
+        }
+    }
+
     #[test]
     fn write_sheet_rejects_invalid_json_and_keeps_existing_sheet() {
         let dir = scratch("invalid");
