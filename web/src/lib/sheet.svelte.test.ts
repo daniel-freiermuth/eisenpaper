@@ -8,7 +8,7 @@ import {
   type Mock,
 } from "vitest";
 
-import type { Sheet, Task } from "./model";
+import { parseSheet, type Sheet, type Task } from "./model";
 import type { store as sheetStore } from "./sheet.svelte";
 
 type Store = typeof sheetStore;
@@ -317,6 +317,33 @@ describe("SheetStore.sync", () => {
       "file tax return",
       "buy milk",
     ]);
+  });
+
+  it("merges a pre-sync import of the server's own sheet without repeating a key", async () => {
+    const archived: Sheet = {
+      ...serverSheet,
+      archive: [{ at: 5, tasks: [{ ...serverTask, id: "t0", done: true }] }],
+      projects: [{ id: "p1", name: "home" }],
+    };
+    const archivedText = JSON.stringify(archived, null, 2);
+    const store = await loadStore(); // empty cache: a new device
+    fetchMock.mockRejectedValue(new TypeError("network down"));
+    await store.sync();
+    store.replace(JSON.parse(archivedText) as Sheet); // import of an export
+    await vi.advanceTimersByTimeAsync(300);
+
+    fetchMock.mockReset();
+    fetchMock.mockImplementation(serve(() => reply(200, archivedText)));
+    await store.sync();
+    await vi.advanceTimersByTimeAsync(300);
+
+    expect(store.sheet.tasks.map((t) => t.id)).toEqual(["t1"]);
+    expect(store.sheet.archive.map((a) => a.at)).toEqual([5]);
+    expect(store.sheet.projects?.map((p) => p.id)).toEqual(["p1"]);
+    for (const [, init] of puts()) {
+      expect(parseSheet(init?.body as string)).not.toBeNull();
+    }
+    expect(parseSheet(storage.get(CACHE_KEY) ?? "")).not.toBeNull();
   });
 
   it("does not save blind once the server is back before any sync", async () => {
