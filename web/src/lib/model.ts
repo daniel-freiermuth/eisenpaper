@@ -65,17 +65,23 @@ export function withAlpha(rgb: string, alpha: number): string {
   return rgb.toLowerCase() + a.toString(16).padStart(2, "0");
 }
 
+/**
+ * JSON.parse reads an overflowing literal (1e999) as ±Infinity, which
+ * JSON.stringify would write back as null; only finite numbers round-trip.
+ */
+const FiniteSchema = v.pipe(v.number(), v.finite());
+
 /** One scrap on the sheet. Positions are normalized to the pane (0..1). */
 export const TaskSchema = v.looseObject({
   id: v.string(),
   text: v.string(),
   /** 0 = not urgent … 1 = urgent */
-  x: v.number(),
+  x: FiniteSchema,
   /** 0 = important … 1 = not important */
-  y: v.number(),
+  y: FiniteSchema,
   done: v.boolean(),
-  created: v.number(),
-  doneAt: v.optional(v.number()),
+  created: FiniteSchema,
+  doneAt: v.optional(FiniteSchema),
   /** scheduled local date, YYYY-MM-DD; absent = backlog */
   day: v.optional(
     v.pipe(
@@ -90,7 +96,7 @@ export const TaskSchema = v.looseObject({
     ),
   ),
   /** position within its day; meaningless without `day` */
-  order: v.optional(v.number()),
+  order: v.optional(FiniteSchema),
   /** id of the task's project; absent = none */
   project: v.optional(v.string()),
   /** free-text annotations; absent = none */
@@ -113,7 +119,7 @@ const UniqueTasksSchema = v.pipe(
 );
 
 export const ArchivedSheetSchema = v.looseObject({
-  at: v.number(),
+  at: FiniteSchema,
   tasks: UniqueTasksSchema,
 });
 export type ArchivedSheet = v.InferOutput<typeof ArchivedSheetSchema>;
