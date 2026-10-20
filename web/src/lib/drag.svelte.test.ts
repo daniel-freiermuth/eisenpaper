@@ -44,7 +44,13 @@ function layout(
     DOMRect.fromRect({ x: 0, y: rect.top, width: 600, height });
 }
 
-function pointer(target: EventTarget, type: string, x: number, y: number) {
+function pointer(
+  target: EventTarget,
+  type: string,
+  x: number,
+  y: number,
+  init: PointerEventInit = {},
+) {
   target.dispatchEvent(
     new PointerEvent(type, {
       button: 0,
@@ -53,6 +59,7 @@ function pointer(target: EventTarget, type: string, x: number, y: number) {
       clientX: x,
       clientY: y,
       bubbles: true,
+      ...init,
     }),
   );
   flushSync();
@@ -145,5 +152,48 @@ describe("edge auto-scroll while dragging a scrap", () => {
 
     expect(list.scrollTop).toBeGreaterThan(0);
     expect(days.scrollTop).toBe(0);
+  });
+});
+
+describe("two fingers on two scraps", () => {
+  const first = { pointerId: 1, pointerType: "touch" };
+  const second = { pointerId: 2, pointerType: "touch" };
+
+  it("tapping one scrap leaves the other finger's long press alone", () => {
+    const select = vi.spyOn(store, "select");
+    pointer(
+      el('[data-zone="backlog"] [data-id="b1"]'),
+      "pointerdown",
+      300,
+      750,
+      first,
+    );
+    const scheduled = el('.day-list [data-id="d1"]');
+    pointer(scheduled, "pointerdown", 300, 100, second);
+    pointer(window, "pointerup", 302, 101, second);
+
+    expect(select.mock.calls).toEqual([["d1"]]);
+    vi.advanceTimersByTime(300); // the first finger is still holding
+    flushSync();
+    expect(drag.current?.id).toBe("b1");
+  });
+
+  it("another finger neither moves nor drops the lifted scrap", () => {
+    pointer(
+      el('[data-zone="backlog"] [data-id="b1"]'),
+      "pointerdown",
+      300,
+      750,
+      first,
+    );
+    vi.advanceTimersByTime(300); // long press
+    flushSync();
+    expect(drag.current?.id).toBe("b1");
+
+    pointer(window, "pointerdown", 50, 50, second);
+    pointer(window, "pointermove", 60, 60, second);
+    pointer(window, "pointerup", 60, 60, second);
+
+    expect(drag.current).toMatchObject({ id: "b1", x: 300, y: 750 });
   });
 });
