@@ -144,4 +144,14 @@ describe("sheet schema", () => {
     });
     expect(parseSheet(text)).toBeNull();
   });
+  it("rejects a day that does not exist in the calendar", () => {
+    for (const day of ["2026-11-31", "2026-02-29", "2026-02-31"]) {
+      const text = JSON.stringify({ tasks: [task("a", { day })], archive: [] });
+      expect(parseSheet(text)).toBeNull();
+    }
+  });
+  it("accepts a leap day", () => {
+    const text = JSON.stringify({ tasks: [task("a", { day: "2028-02-29" })], archive: [] });
+    expect(parseSheet(text)?.tasks[0]?.day).toBe("2028-02-29");
+  });
 });
