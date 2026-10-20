@@ -29,9 +29,38 @@ const KEEPALIVE_LIMIT = 60_000;
 /** merges to retry when tasks.json keeps changing under a save */
 const MAX_CONFLICT_RETRIES = 3;
 
+/** Storage the browser blocks or has filled degrades to no cache at all. */
+function cacheGet(key: string): string | null {
+  try {
+    return localStorage.getItem(key);
+  } catch (e) {
+    console.warn("browser storage unavailable", e);
+    return null;
+  }
+}
+
+/** Returns false when the browser refused the write. */
+function cacheSet(key: string, value: string): boolean {
+  try {
+    localStorage.setItem(key, value);
+    return true;
+  } catch (e) {
+    console.warn("caching the sheet in the browser failed", e);
+    return false;
+  }
+}
+
+function cacheRemove(key: string): void {
+  try {
+    localStorage.removeItem(key);
+  } catch (e) {
+    console.warn("browser storage unavailable", e);
+  }
+}
+
 /** The cached sheet, or an empty one. */
 function loadCache(): Sheet {
-  const raw = localStorage.getItem(CACHE_KEY);
+  const raw = cacheGet(CACHE_KEY);
   return (raw === null ? null : parseSheet(raw)) ?? emptySheet();
 }
 
@@ -57,7 +86,7 @@ class SheetStore {
   selected = $derived(this.sheet.tasks.find((t) => t.id === this.selectedId));
 
   /** tasks.json as last seen on the server; null = never seen, or none there */
-  #lastServerText: string | null = localStorage.getItem(BASE_KEY);
+  #lastServerText: string | null = cacheGet(BASE_KEY);
   /** ETag of #lastServerText; null = none known, so only create (If-None-Match) */
   #etag: string | null = null;
   #writeTimer: number | undefined;
@@ -68,11 +97,15 @@ class SheetStore {
     return JSON.stringify($state.snapshot(this.sheet), null, 2);
   }
 
-  /** Caches the sheet together with the server text it descends from. */
+  /**
+   * Caches the sheet together with the server text it descends from. When
+   * the sheet can't be cached the base is left alone too: an old sheet with
+   * a newer base would read the server's additions since as local deletions.
+   */
   #persist(): void {
-    localStorage.setItem(CACHE_KEY, this.#serialize());
-    if (this.#lastServerText === null) localStorage.removeItem(BASE_KEY);
-    else localStorage.setItem(BASE_KEY, this.#lastServerText);
+    if (!cacheSet(CACHE_KEY, this.#serialize())) return;
+    if (this.#lastServerText === null) cacheRemove(BASE_KEY);
+    else cacheSet(BASE_KEY, this.#lastServerText);
   }
 
   commit(): void {
