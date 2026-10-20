@@ -337,6 +337,47 @@ describe("SchedulePane paging", () => {
     flushSync();
     expect(shownDays()).toEqual(week(0));
   });
+
+  it("keeps a scrap lifted from a day in flight while paging past that day", () => {
+    vi.useFakeTimers();
+    const schedule = vi.spyOn(store, "schedule");
+    let under: Element | null = null;
+    vi.spyOn(document, "elementFromPoint").mockImplementation(() => under);
+    const pointer = (target: EventTarget, type: string, y: number): void => {
+      target.dispatchEvent(
+        new PointerEvent(type, {
+          clientX: 0,
+          clientY: y,
+          button: 0,
+          pointerType: "mouse",
+          bubbles: true,
+        }),
+      );
+      flushSync();
+    };
+
+    pointer(el('[data-id="a"]'), "pointerdown", 0);
+    under = el('button[data-nav="7"]');
+    pointer(window, "pointermove", 20);
+    expect(drag.current?.nav).toBe("7");
+
+    vi.advanceTimersByTime(650);
+    flushSync();
+    expect(shownDays()).toEqual(week(7));
+    // the day the scrap was lifted from is gone; the drag must not be
+    expect(drag.current?.id).toBe("a");
+    expect(document.querySelector(".ghost")).not.toBeNull();
+
+    const target = addDays(TODAY, 9);
+    under = el(`[data-zone="${target}"]`);
+    pointer(window, "pointermove", 40);
+    pointer(window, "pointerup", 40);
+
+    expect(drag.current).toBeNull();
+    expect(schedule).toHaveBeenCalledExactlyOnceWith("a", target, 0);
+    expect(dayIds(target)).toEqual(["a"]);
+    expect(commit).toHaveBeenCalledOnce();
+  });
 });
 
 describe("SchedulePane backlog tray", () => {
