@@ -707,3 +707,65 @@ describe("SheetStore edit lifecycle", () => {
     await expectUncommitted(store);
   });
 });
+
+describe("SheetStore projects", () => {
+  it("keeps the projects of both sides when merging a never-synced sheet", async () => {
+    const store = await loadStore(); // empty cache: a new device
+    fetchMock.mockRejectedValue(new TypeError("network down"));
+    await store.sync();
+    store.addProject("garden");
+
+    const remote: Sheet = {
+      ...serverSheet,
+      projects: [{ id: "p1", name: "taxes" }],
+    };
+    fetchMock.mockReset();
+    fetchMock.mockImplementation(
+      serve(() => reply(200, JSON.stringify(remote))),
+    );
+    await store.sync();
+
+    expect(store.sheet.projects?.map((p) => p.name)).toEqual([
+      "taxes",
+      "garden",
+    ]);
+  });
+
+  it("refuses blank names and names taken in any letter case", async () => {
+    const store = await loadStore();
+    expect(store.addProject("Garden")).not.toBeNull();
+    const work = store.addProject("work");
+    if (work === null) throw new Error("work refused");
+
+    expect(store.addProject("  garden ")).toBeNull();
+    expect(store.addProject("   ")).toBeNull();
+    expect(store.renameProject(work, "GARDEN")).toBe(false);
+    expect(store.renameProject(work, " Work ")).toBe(true);
+    expect(store.sheet.projects?.map((p) => p.name)).toEqual([
+      "Garden",
+      "Work",
+    ]);
+  });
+
+  it("unassigns a deleted project's tasks and leaves the others", async () => {
+    const store = await loadStore();
+    const garden = store.addProject("garden");
+    const work = store.addProject("work");
+    if (garden === null || work === null) throw new Error("project refused");
+    for (const text of ["weed", "report"]) {
+      store.addDraft(0.5, 0.5);
+      const draft = store.draft;
+      if (draft === null) throw new Error("no draft");
+      store.finishEdit(draft, text);
+    }
+    const [weed, report] = store.sheet.tasks;
+    if (weed === undefined || report === undefined) throw new Error("no tasks");
+    store.setProject(weed, garden);
+    store.setProject(report, work);
+
+    store.removeProject(garden);
+
+    expect(store.sheet.projects?.map((p) => p.id)).toEqual([work]);
+    expect(store.sheet.tasks.map((t) => t.project)).toEqual([undefined, work]);
+  });
+});

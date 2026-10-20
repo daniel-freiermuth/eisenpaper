@@ -4,8 +4,9 @@
 
   interface Props {
     onOpenArchive: () => void;
+    onOpenSettings: () => void;
   }
-  const { onOpenArchive }: Props = $props();
+  const { onOpenArchive, onOpenSettings }: Props = $props();
 
   const STATUS: Record<SyncStatus, { label: string; title: string }> = {
     loading: { label: "…", title: "connecting to the eisenpaper server" },
@@ -87,6 +88,7 @@
   <button onclick={onOpenArchive}>old sheets</button>
   <button onclick={onExport}>export</button>
   <button onclick={() => fileInput?.click()}>import</button>
+  <button onclick={onOpenSettings}>settings</button>
   <input
     bind:this={fileInput}
     type="file"

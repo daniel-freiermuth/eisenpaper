@@ -12,6 +12,10 @@
   }
   const { task, editing }: Props = $props();
 
+  const project = $derived(
+    store.sheet.projects?.find((p) => p.id === task.project),
+  );
+
   /** below this a press counts as a click, not a drag */
   const DRAG_THRESHOLD_PX = 6;
 
@@ -163,6 +167,9 @@
     ></span>
   {:else}
     <span class="txt">{task.text}</span>
+    {#if project !== undefined}
+      <span class="project" title="project">{project.name}</span>
+    {/if}
     {#if task.day !== undefined}
       <span
         class="when"
@@ -258,11 +265,16 @@
     visibility: hidden;
   }
 
+  .project,
   .when {
     margin-left: 6px;
     font-size: 13px;
     color: var(--pencil);
     white-space: nowrap;
+  }
+
+  .project::before {
+    content: "#";
   }
 
   .late {
