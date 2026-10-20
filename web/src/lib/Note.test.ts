@@ -105,6 +105,7 @@ afterEach(() => {
   void unmount(pane);
   vi.useRealTimers();
   vi.restoreAllMocks();
+  vi.unstubAllGlobals();
 });
 
 describe("Note in-place editor", () => {
@@ -194,6 +195,25 @@ describe("Note in-place editor", () => {
     expect(task().text).toBe("file taxes by friday");
     expect(store.editingId).toBeNull();
     expect(commit).toHaveBeenCalledOnce();
+  });
+
+  it("leaves a right-click in the editor to the browser instead of tearing off the note", () => {
+    const confirm = vi.fn(() => true);
+    vi.stubGlobal("confirm", confirm);
+    const el = startEdit();
+
+    const e = new MouseEvent("contextmenu", {
+      bubbles: true,
+      cancelable: true,
+    });
+    el.dispatchEvent(e);
+    flushSync();
+
+    expect(e.defaultPrevented).toBe(false); // native paste/spellcheck menu
+    expect(confirm).not.toHaveBeenCalled();
+    expect(task().text).toBe("file tax return");
+    expect(store.editingId).toBe("t1");
+    expect(commit).not.toHaveBeenCalled();
   });
 });
 
