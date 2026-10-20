@@ -157,6 +157,7 @@ export function draggable(opts: DraggableOptions): Attachment<HTMLElement> {
       press = null;
       cancelAnimationFrame(frame);
       drag.current = null;
+      edge = null;
       removeEventListener("pointermove", onMove);
       removeEventListener("pointerup", onUp);
       removeEventListener("pointercancel", onCancel);
