@@ -1,3 +1,4 @@
+.svelte-check/
 dist/
 node_modules/
 pnpm-lock.yaml
