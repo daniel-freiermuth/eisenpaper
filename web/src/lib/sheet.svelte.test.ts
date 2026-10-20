@@ -539,6 +539,50 @@ describe("SheetStore.start", () => {
     expect(putBodies()).toMatchObject([{ tasks: [{ id: "t1", done: true }] }]);
   });
 
+  it("keeps overlapping keepalive PUTs within the shared 64 KiB quota", async () => {
+    const { store } = await startedStore();
+    // browsers sum the bodies of every keepalive request still in flight
+    let inFlight = 0;
+    const held: (() => void)[] = [];
+    const accepted: string[] = [];
+    fetchMock.mockImplementation((_url, init) => {
+      const body = init?.body as string;
+      const bytes = init?.keepalive === true ? body.length : 0; // ASCII body
+      if (inFlight + bytes > 65_536)
+        return Promise.reject(new TypeError("keepalive quota exceeded"));
+      inFlight += bytes;
+      return new Promise<Response>((resolve) =>
+        held.push(() => {
+          inFlight -= bytes;
+          accepted.push(body);
+          resolve(reply(204));
+        }),
+      );
+    });
+
+    // a ~40 KB sheet whose debounced PUT is still in flight on a slow link
+    const text = "x".repeat(40_000);
+    store.replace({ tasks: [{ ...serverTask, text }], archive: [] });
+    await vi.advanceTimersByTimeAsync(300);
+    expect(puts()).toHaveLength(1);
+
+    // a newer edit, then the tab is hidden before its delay runs out
+    store.toggleDone(firstTask(store));
+    setVisibility("hidden");
+    expect(puts()).toHaveLength(2);
+    await vi.advanceTimersByTimeAsync(0);
+    expect(store.status).toBe("saving");
+
+    for (const release of held) release();
+    await vi.waitFor(() => {
+      expect(store.status).toBe("synced");
+    });
+    expect(accepted).toHaveLength(2);
+    expect(JSON.parse(accepted[1] ?? "null")).toMatchObject({
+      tasks: [{ id: "t1", done: true }],
+    });
+  });
+
   it("re-syncs with the server when the window regains focus", async () => {
     const { store } = await startedStore();
     win.dispatchEvent(new Event("focus"));
