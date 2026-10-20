@@ -955,6 +955,21 @@ describe("SheetStore edit lifecycle", () => {
     expect(putBodies()).toEqual([{ tasks: [serverTask, edited], archive: [] }]);
   });
 
+  it("closes a note left unchanged without saving, so the next sync adopts the server's sheet", async () => {
+    const store = await editingStore(); // cache savedAt 5, server savedAt 10
+    const task = sheetTask(store, "t2");
+    store.startEdit(task);
+    await store.sync(); // paused while editing: the server is not consulted
+    store.finishEdit(task, "  call the plumber\n");
+
+    expect(store.editingId).toBeNull();
+    await expectUncommitted(store);
+
+    await store.sync();
+    expect(JSON.parse(store.exportText())).toEqual(serverSheet);
+    expect(puts()).toHaveLength(0);
+  });
+
   it("cancels a draft without adding or saving anything", async () => {
     const store = await editingStore();
     store.addDraft(0.5, 0.5);
