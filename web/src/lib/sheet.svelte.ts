@@ -17,7 +17,7 @@ const CACHE_KEY = "eisenpaper.v1";
 const UNSYNCED_KEY = "eisenpaper.v1.unsynced";
 const ENDPOINT = "tasks.json";
 const WRITE_DELAY_MS = 300;
-/** browsers cap keepalive request bodies at 64 KiB */
+/** browsers cap keepalive request bodies at 64 KiB (of UTF-8, not UTF-16) */
 const KEEPALIVE_LIMIT = 60_000;
 
 /** The cached sheet, or an empty one that is flagged as never synced. */
@@ -79,7 +79,7 @@ class SheetStore {
         method: "PUT",
         headers: { "content-type": "application/json" },
         body: text,
-        keepalive: text.length < KEEPALIVE_LIMIT,
+        keepalive: new TextEncoder().encode(text).length < KEEPALIVE_LIMIT,
       });
       if (!res.ok) {
         console.error(`saving the sheet failed: HTTP ${String(res.status)}`);
