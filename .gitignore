@@ -1,6 +1,7 @@
 /target
 /web/node_modules
 /web/dist
+/web/.svelte-check
 # the real sheet: personal data, never committed
 /tasks.json
 # `just dev` sheet, kept away from the real one
