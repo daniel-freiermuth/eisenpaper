@@ -443,6 +443,10 @@ mod tests {
     const STALLED_PUT: &[u8] =
         b"PUT /tasks.json HTTP/1.1\r\nHost: x\r\nContent-Length: 100\r\n\r\n{";
 
+    /// The smallest body `write_sheet` accepts, for tests about what happens
+    /// after validation.
+    const EMPTY_SHEET: &[u8] = br#"{"tasks":[],"archive":[]}"#;
+
     /// Reads a response head (these responses have no body), failing the
     /// test if none comes in time. Not waiting for the close keeps paused
     /// time from skipping ahead while the connection shuts down.
@@ -643,10 +647,11 @@ mod tests {
         fs::write(&target, br#"{"tasks":[]}"#).unwrap();
         let data = dir.join("tasks.json");
         std::os::unix::fs::symlink(&target, &data).unwrap();
-        write_sheet(&data, br#"{"tasks":[1]}"#).unwrap();
+        let sheet = r#"{"tasks":[],"archive":[],"savedAt":1}"#;
+        write_sheet(&data, sheet.as_bytes()).unwrap();
         let link = fs::symlink_metadata(&data).unwrap();
         assert!(link.file_type().is_symlink());
-        assert_eq!(fs::read_to_string(&target).unwrap(), r#"{"tasks":[1]}"#);
+        assert_eq!(fs::read_to_string(&target).unwrap(), sheet);
     }
 
     #[tokio::test]
@@ -684,9 +689,9 @@ mod tests {
     #[tokio::test]
     async fn put_with_query_string_still_writes_the_sheet() {
         let (app, data) = scratch_app("put-query");
-        let res = call(&app, "PUT", "/tasks.json?x=1", b"{}".to_vec()).await;
+        let res = call(&app, "PUT", "/tasks.json?x=1", EMPTY_SHEET.to_vec()).await;
         assert_eq!(res.status(), StatusCode::NO_CONTENT);
-        assert_eq!(fs::read_to_string(&data).unwrap(), "{}");
+        assert_eq!(fs::read(&data).unwrap(), EMPTY_SHEET);
     }
 
     #[tokio::test]
@@ -752,7 +757,7 @@ mod tests {
         let (app, data) = scratch_app("put-rename");
         // the temp file can be written, but renaming a file onto a directory fails
         fs::create_dir_all(&data).unwrap();
-        let res = call(&app, "PUT", "/tasks.json", b"{}".to_vec()).await;
+        let res = call(&app, "PUT", "/tasks.json", EMPTY_SHEET.to_vec()).await;
         assert_eq!(res.status(), StatusCode::INTERNAL_SERVER_ERROR);
         assert_eq!(res.headers()["x-eisenpaper"], "1");
         assert!(data.is_dir());
@@ -765,12 +770,15 @@ mod tests {
     fn write_sheet_reports_unwritable_paths_as_io_errors() {
         // no file name to derive the temp name from: refused before any write
         assert!(matches!(
-            write_sheet(Path::new("/"), b"{}"),
+            write_sheet(Path::new("/"), EMPTY_SHEET),
             Err(PutError::Io(_))
         ));
         // the temp file itself cannot be created
         let data = scratch("missing-dir").join("gone").join("tasks.json");
-        assert!(matches!(write_sheet(&data, b"{}"), Err(PutError::Io(_))));
+        assert!(matches!(
+            write_sheet(&data, EMPTY_SHEET),
+            Err(PutError::Io(_))
+        ));
         assert!(!data.exists());
     }
 
