@@ -562,8 +562,50 @@ mod tests {
         assert_eq!(res.status(), StatusCode::OK);
         assert_eq!(res.headers()["x-eisenpaper"], "1");
         assert_eq!(res.headers()["cache-control"], "no-store");
+        assert_eq!(res.headers()["content-type"], "application/json");
         let body = to_bytes(res.into_body(), usize::MAX).await.unwrap();
         assert_eq!(body, &sheet[..]);
+    }
+
+    #[tokio::test]
+    async fn static_responses_never_carry_the_marker() {
+        let (app, data) = scratch_app("unmarked");
+        fs::write(&data, "{}").unwrap();
+        // an unmarked 404 keeps the app from treating the origin as writable
+        for uri in ["/missing.js", "/sub/tasks.json", "/tasks.json/x"] {
+            let res = call(&app, "GET", uri, Vec::new()).await;
+            assert_eq!(res.status(), StatusCode::NOT_FOUND, "{uri}");
+            assert!(!res.headers().contains_key("x-eisenpaper"), "{uri}");
+        }
+    }
+
+    #[tokio::test]
+    async fn put_with_query_string_still_writes_the_sheet() {
+        let (app, data) = scratch_app("put-query");
+        let res = call(&app, "PUT", "/tasks.json?x=1", b"{}".to_vec()).await;
+        assert_eq!(res.status(), StatusCode::NO_CONTENT);
+        assert_eq!(fs::read_to_string(&data).unwrap(), "{}");
+    }
+
+    #[tokio::test]
+    async fn other_methods_are_refused_with_405_and_write_nothing() {
+        let (app, data) = scratch_app("methods");
+        for (method, uri) in [
+            ("POST", "/tasks.json"),
+            ("DELETE", "/tasks.json"),
+            ("PATCH", "/tasks.json"),
+            ("POST", "/"),
+            ("PUT", "/"),
+            ("PUT", "/sub/tasks.json"),
+        ] {
+            let res = call(&app, method, uri, b"{}".to_vec()).await;
+            assert_eq!(
+                res.status(),
+                StatusCode::METHOD_NOT_ALLOWED,
+                "{method} {uri}"
+            );
+        }
+        assert!(!data.exists());
     }
 
     #[tokio::test]
