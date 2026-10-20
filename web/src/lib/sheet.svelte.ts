@@ -161,7 +161,12 @@ class SheetStore {
       // server has them: the renderer and parseSheet reject duplicate keys.
       const taskIds = new Set(remote.tasks.map((t) => t.id));
       const archiveAts = new Set(remote.archive.map((a) => a.at));
-      const projects = [...(remote.projects ?? []), ...(local.projects ?? [])];
+      const remoteProjects = remote.projects ?? [];
+      const projectIds = new Set(remoteProjects.map((p) => p.id));
+      const projects = [
+        ...remoteProjects,
+        ...(local.projects ?? []).filter((p) => !projectIds.has(p.id)),
+      ];
       this.sheet = {
         ...remote,
         tasks: [
