@@ -253,6 +253,23 @@ describe("SheetStore.sync", () => {
     expect(puts()).toHaveLength(0);
   });
 
+  it("does not save over a tasks.json that is not a valid sheet", async () => {
+    storage.set(CACHE_KEY, localText(5)); // a device that has synced before
+    const store = await loadStore();
+    const corrupt = JSON.stringify({ tasks: "nope", archive: [], savedAt: 99 });
+    fetchMock.mockImplementation(serve(() => reply(200, corrupt)));
+    await store.sync();
+    expect(store.status).toBe("error");
+
+    const task = store.sheet.tasks[0];
+    if (task === undefined) throw new Error("cached sheet not loaded");
+    store.toggleDone(task);
+    await vi.advanceTimersByTimeAsync(300);
+
+    expect(puts()).toHaveLength(0);
+    expect(store.status).toBe("error");
+  });
+
   it("does not save over a sheet the server failed to read", async () => {
     storage.set(CACHE_KEY, localText);
     storage.set(BASE_KEY, emptyText); // a device that has synced before
