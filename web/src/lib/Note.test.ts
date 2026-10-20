@@ -105,6 +105,7 @@ afterEach(() => {
   void unmount(pane);
   vi.useRealTimers();
   vi.restoreAllMocks();
+  vi.unstubAllGlobals();
 });
 
 describe("Note in-place editor", () => {
@@ -194,6 +195,26 @@ describe("Note in-place editor", () => {
     expect(task().text).toBe("file taxes by friday");
     expect(store.editingId).toBeNull();
     expect(commit).toHaveBeenCalledOnce();
+  });
+
+  it("leaves the native text menu to a right-click in the editor", () => {
+    const confirm = vi.fn(() => true);
+    vi.stubGlobal("confirm", confirm);
+    const el = startEdit();
+
+    const e = new MouseEvent("contextmenu", {
+      button: 2,
+      bubbles: true,
+      cancelable: true,
+    });
+    el.dispatchEvent(e);
+    flushSync();
+
+    expect(e.defaultPrevented).toBe(false);
+    expect(confirm).not.toHaveBeenCalled();
+    expect(store.sheet.tasks.map((t) => t.id)).toEqual(["t1"]);
+    expect(store.editingId).toBe("t1");
+    expect(editor()).toBe(el);
   });
 });
 
