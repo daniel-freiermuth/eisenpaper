@@ -80,6 +80,7 @@ function pointer(type: string, clientX: number, clientY: number): void {
 
 beforeEach(() => {
   store.cancelEdit();
+  store.select(null);
   store.sheet = {
     tasks: [
       {
@@ -213,17 +214,31 @@ describe("Note drag versus click", () => {
     delete root["clientHeight"];
   });
 
-  it("treats movement under the threshold as a click that crosses the note out", () => {
+  it("treats movement under the threshold as a click that selects the note", () => {
     pointer("pointerdown", 100, 100);
     pointer("pointermove", 103, 104); // 5px
     pointer("pointerup", 103, 104);
 
+    expect(store.selectedId).toBe("t1");
+    vi.runAllTimers();
+    flushSync();
+    // selecting is view state: nothing moved, nothing crossed out or saved
     expect(task()).toMatchObject({ x: 0.5, y: 0.5, done: false });
-    vi.advanceTimersByTime(260); // the double-click window
+    expect(commit).not.toHaveBeenCalled();
+  });
+
+  it("crosses out with ✓ without selecting or dragging the note", () => {
+    const check = note().querySelector<HTMLButtonElement>("button.check");
+    if (check === null) throw new Error("no ✓ button");
+    check.dispatchEvent(
+      new PointerEvent("pointerdown", { button: 0, bubbles: true }),
+    );
+    check.click();
     flushSync();
 
     expect(task()).toMatchObject({ x: 0.5, y: 0.5, done: true });
     expect(commit).toHaveBeenCalledOnce(); // by toggleDone
+    expect(store.selectedId).toBeNull();
   });
 
   it("moves the note from the threshold on and commits once on release", () => {
@@ -242,5 +257,6 @@ describe("Note drag versus click", () => {
 
     expect(commit).toHaveBeenCalledOnce();
     expect(task()).toMatchObject({ done: false }); // a drag is not a click
+    expect(store.selectedId).toBeNull();
   });
 });

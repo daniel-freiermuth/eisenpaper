@@ -12,8 +12,6 @@
   }
   const { task, editing }: Props = $props();
 
-  /** delay so a double-click (edit) can cancel the single-click (cross out) */
-  const CLICK_DELAY_MS = 260;
   /** below this a press counts as a click, not a drag */
   const DRAG_THRESHOLD_PX = 6;
 
@@ -28,7 +26,6 @@
     moved: boolean;
   } | null = null;
   let dragging = $state(false);
-  let clickTimer: number | undefined;
   let cancelled = false;
 
   // fill, focus and put the caret at the end when entering edit mode
@@ -83,16 +80,12 @@
       store.commit();
       return;
     }
-    clearTimeout(clickTimer);
-    clickTimer = window.setTimeout(() => {
-      store.toggleDone(task);
-    }, CLICK_DELAY_MS);
+    store.select(task.id);
   }
 
   function ondblclick(e: MouseEvent): void {
     e.stopPropagation(); // the pane would create a new note
     if (editing) return; // a double-click in the text selects a word
-    clearTimeout(clickTimer);
     store.startEdit(task);
   }
 
@@ -102,7 +95,7 @@
   }
 
   function onkeydown(e: KeyboardEvent): void {
-    if (editing) return;
+    if (editing || e.target !== e.currentTarget) return;
     if (e.key === "Enter") {
       e.preventDefault();
       store.startEdit(task);
@@ -142,6 +135,7 @@
   class:done={task.done}
   class:dragging
   class:editing
+  class:selected={store.selectedId === task.id}
   style:left="{task.x * 100}%"
   style:top="{task.y * 100}%"
   style:--rot={rotation(task.id)}
@@ -176,6 +170,20 @@
         title="scheduled {task.day}">{dueLabel(task.day, today.value)}</span
       >
     {/if}
+    <button
+      class="check"
+      title={task.done ? "uncross" : "cross out"}
+      aria-label={task.done ? "uncross" : "cross out"}
+      onpointerdown={(e) => {
+        e.stopPropagation(); // neither a drag nor a selection
+      }}
+      ondblclick={(e) => {
+        e.stopPropagation();
+      }}
+      onclick={() => {
+        store.toggleDone(task);
+      }}>{task.done ? "↺" : "✓"}</button
+    >
   {/if}
 </div>
 
@@ -183,6 +191,8 @@
   .note {
     position: absolute;
     transform: translate(-50%, -50%) rotate(var(--rot, 0deg));
+    /* size to the words, not to the room left before the pane's edge */
+    width: max-content;
     max-width: 34ch;
     padding: 2px 8px;
     font-size: 19px;
@@ -206,6 +216,46 @@
     z-index: 10;
     background: rgb(from var(--highlight) r g b / 75%);
     box-shadow: 2px 3px 8px rgb(43 42 38 / 18%);
+  }
+
+  .selected {
+    z-index: 4;
+    background: rgb(from var(--highlight) r g b / 80%);
+    box-shadow: 0 0 0 1.5px var(--pencil);
+  }
+
+  /* above overlapping neighbours, so they cannot steal the way to ✓ */
+  .note:hover {
+    z-index: 5;
+  }
+
+  /* hangs off the right edge; as a child it keeps the note hovered */
+  .check {
+    position: absolute;
+    top: 50%;
+    left: 100%;
+    transform: translateY(-50%);
+    /* linger after the pointer leaves, so a sloppy path still reaches it */
+    transition: visibility 0s linear 0.35s;
+  }
+
+  /* invisible bridge from the note to ✓ over the full note height; painted
+     before the button, so the button stays on top for clicks */
+  .note:is(:hover, .selected)::before {
+    content: "";
+    position: absolute;
+    top: -6px;
+    bottom: -6px;
+    left: 100%;
+    width: 32px;
+  }
+
+  .note:is(:hover, :focus-within, .selected) .check {
+    transition-delay: 0s;
+  }
+
+  .note:not(:hover, :focus-within, .selected) .check {
+    visibility: hidden;
   }
 
   .when {

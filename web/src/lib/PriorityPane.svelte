@@ -14,9 +14,13 @@
       (e.clientY - pane.top) / pane.height,
     );
   }
+
+  function onpointerdown(e: PointerEvent): void {
+    if (e.target === e.currentTarget) store.select(null); // blank paper
+  }
 </script>
 
-<main class="pane" {ondblclick}>
+<main class="pane" {onpointerdown} {ondblclick}>
   <div class="axis x"></div>
   <div class="axis y"></div>
   <span class="axis-label urgent">urgent &rarr;</span>
@@ -30,8 +34,8 @@
     <div class="hint">
       double-click anywhere to jot a task<br />
       <small
-        >click = cross out &middot; double-click = edit &middot; drag =
-        reprioritize &middot; right-click = tear off</small
+        >click = details &middot; &check; = cross out &middot; double-click =
+        edit &middot; drag = reprioritize &middot; right-click = tear off</small
       >
     </div>
   {/if}
@@ -47,7 +51,8 @@
 <style>
   .pane {
     position: fixed;
-    inset: 0 0 0 var(--tabs-w);
+    inset: 0 var(--pane-right) 0 var(--tabs-w);
+    transition: right 0.2s ease;
     cursor: crosshair;
   }
 

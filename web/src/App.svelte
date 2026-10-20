@@ -2,6 +2,7 @@
   import { onMount } from "svelte";
 
   import ArchivePanel from "./lib/ArchivePanel.svelte";
+  import DetailPane from "./lib/DetailPane.svelte";
   import PaneTabs from "./lib/PaneTabs.svelte";
   import PriorityPane from "./lib/PriorityPane.svelte";
   import SchedulePane from "./lib/SchedulePane.svelte";
@@ -23,6 +24,14 @@
     localStorage.setItem(PANE_KEY, pane);
   });
 
+  // the panes make room for the detail pane (see --pane-right in app.css)
+  $effect(() => {
+    document.documentElement.classList.toggle(
+      "detail-open",
+      store.selected !== undefined,
+    );
+  });
+
   onMount(() => {
     const stopSync = store.start();
     const stopClock = today.start();
@@ -40,5 +49,6 @@
   <SchedulePane />
 {/if}
 
+<DetailPane />
 <Toolbar onOpenArchive={() => (archiveOpen = true)} />
 <ArchivePanel bind:open={archiveOpen} />

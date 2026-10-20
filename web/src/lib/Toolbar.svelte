@@ -100,7 +100,7 @@
   .bar {
     position: fixed;
     top: 10px;
-    right: 12px;
+    right: calc(var(--pane-right) + 12px);
     left: calc(var(--tabs-w) + 8px);
     z-index: 20;
     display: flex;

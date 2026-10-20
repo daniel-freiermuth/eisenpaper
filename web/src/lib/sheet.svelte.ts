@@ -41,6 +41,10 @@ class SheetStore {
   editingId = $state<string | null>(null);
   /** a new note being typed; joins the sheet only once it has text */
   draft = $state<Task | null>(null);
+  /** id of the task open in the detail pane; view state, never persisted */
+  selectedId = $state<string | null>(null);
+  /** the selected task, gone once it leaves the sheet */
+  selected = $derived(this.sheet.tasks.find((t) => t.id === this.selectedId));
 
   /** never reconciled with tasks.json, so no base to overwrite it with */
   #unsynced = localStorage.getItem(UNSYNCED_KEY) !== null;
@@ -246,6 +250,17 @@ class SheetStore {
   /** Drop from the schedule pane: a day and index, or null = backlog. */
   schedule(id: string, day: string | null, index: number): void {
     placeTask(this.sheet.tasks, id, day, index);
+    this.commit();
+  }
+
+  select(id: string | null): void {
+    this.selectedId = id;
+  }
+
+  /** An emptied note is dropped; anything else is kept as typed. */
+  setNote(task: Task, note: string): void {
+    if (note === "") delete task.note;
+    else task.note = note;
     this.commit();
   }
 
