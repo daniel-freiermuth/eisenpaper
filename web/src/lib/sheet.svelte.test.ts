@@ -427,6 +427,29 @@ describe("SheetStore.commit", () => {
       tasks: [{ id: "t1", done: true }],
     });
   });
+
+  /** Like `server(204)`, but rejects a keepalive PUT over the browsers'
+   * 64 KiB keepalive body quota, which counts UTF-8 bytes. */
+  const keepaliveQuota: Fetch = (url, init) =>
+    init?.keepalive === true &&
+    new TextEncoder().encode(init.body as string).length > 65_536
+      ? Promise.reject(new TypeError("keepalive body over 64 KiB"))
+      : server(204)(url, init);
+
+  it("saves a sheet whose UTF-8 body exceeds the keepalive quota", async () => {
+    const store = await loadStore();
+    fetchMock.mockImplementation(keepaliveQuota);
+    await store.sync();
+
+    // ~40k UTF-16 code units, but ~120k UTF-8 bytes
+    const text = "締め切り".repeat(10_000);
+    store.replace({ tasks: [{ ...serverTask, text }], archive: [] });
+    await vi.advanceTimersByTimeAsync(300);
+
+    expect(store.exportText().length).toBeLessThan(60_000);
+    expect(putBodies()).toMatchObject([{ tasks: [{ text }] }]);
+    expect(store.status).toBe("synced");
+  });
 });
 
 describe("SheetStore.start", () => {
