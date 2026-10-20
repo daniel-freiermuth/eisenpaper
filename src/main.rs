@@ -209,6 +209,10 @@ fn write_sheet(data: &Path, body: &[u8]) -> Result<(), PutError> {
     if serde_json::from_slice::<serde_json::Value>(body).is_err() {
         return Err(PutError::InvalidJson);
     }
+    // rename replaces a symlink rather than writing through it, so write next
+    // to and over the file it points at (e.g. a link into a Syncthing folder)
+    let resolved = fs::canonicalize(data);
+    let data = resolved.as_deref().unwrap_or(data);
     let name = data
         .file_name()
         .ok_or_else(|| PutError::Io(io::Error::other("data path has no file name")))?;
@@ -555,7 +559,8 @@ mod tests {
         let data = dir.join("tasks.json");
         std::os::unix::fs::symlink(&target, &data).unwrap();
         write_sheet(&data, br#"{"tasks":[1]}"#).unwrap();
-        assert!(fs::symlink_metadata(&data).unwrap().file_type().is_symlink());
+        let link = fs::symlink_metadata(&data).unwrap();
+        assert!(link.file_type().is_symlink());
         assert_eq!(fs::read_to_string(&target).unwrap(), r#"{"tasks":[1]}"#);
     }
 
