@@ -75,7 +75,7 @@
     class="check"
     title={task.done ? "uncross" : "cross out"}
     aria-label={task.done ? "uncross" : "cross out"}
-    onpointerdown={stop}
+    onpointerdowncapture={stop}
     onclick={() => {
       store.toggleDone(task);
     }}>{task.done ? "↺" : "✓"}</button
@@ -85,7 +85,7 @@
       class="unschedule"
       title="unschedule — back to the backlog"
       aria-label="unschedule"
-      onpointerdown={stop}
+      onpointerdowncapture={stop}
       onclick={() => {
         store.schedule(task.id, null, 0);
       }}>&times;</button
