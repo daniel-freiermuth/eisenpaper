@@ -8,7 +8,7 @@ import {
   type Mock,
 } from "vitest";
 
-import type { Sheet, Task } from "./model";
+import { parseSheet, type Sheet, type Task } from "./model";
 import type { store as sheetStore } from "./sheet.svelte";
 
 type Store = typeof sheetStore;
@@ -335,6 +335,39 @@ describe("SheetStore.sync", () => {
     expect(putBodies()).toMatchObject([
       { tasks: [{ id: "t1" }, { text: "buy milk" }] },
     ]);
+  });
+
+  it("merges a backup imported before the first sync into a sheet it can read back", async () => {
+    const backup: Sheet = {
+      tasks: [serverTask],
+      archive: [{ at: 5, tasks: [{ ...serverTask, id: "t0", done: true }] }],
+      savedAt: 10,
+    };
+    const backupText = JSON.stringify(backup, null, 2);
+    const store = await loadStore(); // empty cache: a new device
+    fetchMock.mockRejectedValue(new TypeError("network down"));
+    await store.sync();
+
+    const imported = parseSheet(backupText); // what Toolbar's import does
+    if (imported === null) throw new Error("backup does not parse");
+    store.replace(imported);
+    await vi.advanceTimersByTimeAsync(300);
+
+    fetchMock.mockReset();
+    fetchMock.mockImplementation(serve(() => reply(200, backupText)));
+    await store.sync();
+    await vi.advanceTimersByTimeAsync(300);
+
+    const bodies = puts().map(([, init]) => init?.body as string);
+    expect(bodies.length).toBeGreaterThan(0);
+    for (const body of bodies) {
+      expect(parseSheet(body)).toMatchObject({
+        tasks: [{ id: "t1" }],
+        archive: [{ at: 5 }],
+      });
+    }
+    expect(parseSheet(storage.get(CACHE_KEY) ?? "")).not.toBeNull();
+    expect(store.sheet.tasks.map((t) => t.id)).toEqual(["t1"]);
   });
 
   it("does not yank a note whose edit began while the GET was in flight", async () => {
