@@ -2,6 +2,7 @@
   import { drag, draggable } from "./drag.svelte";
   import type { Task } from "./model";
   import { store } from "./sheet.svelte";
+  import { tintStyle } from "./tint";
 
   interface Props {
     task: Task;
@@ -15,6 +16,8 @@
   const project = $derived(
     store.sheet.projects?.find((p) => p.id === task.project),
   );
+  /** colours for every state, as --t-* custom properties */
+  const tintVars = $derived(tintStyle(project?.color));
 
   /** buttons inside the scrap must neither lift it nor select it */
   const stop = (e: Event): void => {
@@ -43,6 +46,8 @@
   class:done={task.done}
   class:lifted={drag.current?.id === task.id}
   class:selected={store.selectedId === task.id}
+  class:tinted={tintVars !== undefined}
+  style={tintVars}
   data-id={task.id}
   role="button"
   tabindex="0"
@@ -113,6 +118,53 @@
   .selected {
     background: rgb(from var(--highlight) r g b / 80%);
     box-shadow: inset 0 0 0 1.5px var(--pencil);
+  }
+
+  /* see Note.svelte: one background per look; hover draws a lift shadow,
+     selection a background moved away from the text colour */
+  .scrap.tinted {
+    --fg: var(--t-open-fg);
+    --muted: var(--t-open-muted);
+    --selected: var(--t-open-selected);
+    background: var(--t-open-bg);
+    color: var(--fg);
+  }
+
+  .scrap.tinted.done {
+    --fg: var(--t-done-muted);
+    --muted: var(--t-done-muted);
+    --selected: var(--t-done-selected);
+    background: var(--t-done-bg);
+  }
+
+  .scrap.tinted.selected {
+    background: var(--selected);
+    box-shadow: inset 0 0 0 1.5px var(--fg);
+  }
+
+  .tinted:hover,
+  .tinted:focus-visible {
+    box-shadow: 0 2px 7px rgb(43 42 38 / 35%);
+  }
+
+  /* the computed colours already carry the fading; opacity would undo
+     their contrast guarantee */
+  .tinted .project,
+  .tinted .unschedule {
+    color: var(--muted);
+  }
+
+  /* see Note.svelte: on a tint the overdue date is a red chip */
+  .tinted .when {
+    padding: 0 4px;
+    border-radius: 3px;
+    color: #fff;
+    background: var(--accent);
+    opacity: 1;
+  }
+
+  .tinted.done .txt {
+    opacity: 1;
   }
 
   .check {

@@ -3,8 +3,13 @@ import { describe, expect, it } from "vitest";
 import {
   clampPosition,
   freshSheet,
+  nextProjectColor,
   parseSheet,
+  PROJECT_COLORS,
   reconcile,
+  splitAlpha,
+  tintColor,
+  withAlpha,
   type Sheet,
   type Task,
 } from "./model";
@@ -142,5 +147,50 @@ describe("clampPosition", () => {
   });
   it("leaves interior positions untouched", () => {
     expect(clampPosition(0.4, 0.6)).toEqual({ x: 0.4, y: 0.6 });
+  });
+});
+
+describe("nextProjectColor", () => {
+  const projects = (colors: (string | undefined)[]) =>
+    colors.map((color, i) =>
+      color === undefined
+        ? { id: String(i), name: String(i) }
+        : { id: String(i), name: String(i), color },
+    );
+
+  it("takes the first colour nobody uses, filling gaps left by deletions", () => {
+    const [first, second, third] = PROJECT_COLORS;
+    expect(nextProjectColor(projects([]))).toBe(first);
+    expect(nextProjectColor(projects([first, third, undefined]))).toBe(second);
+  });
+
+  it("cycles through the palette once every colour is taken", () => {
+    const all = projects([...PROJECT_COLORS]);
+    expect(nextProjectColor(all)).toBe(PROJECT_COLORS[0]);
+    expect(nextProjectColor([...all, ...projects([undefined])])).toBe(
+      PROJECT_COLORS[1],
+    );
+  });
+});
+
+describe("project colour alpha", () => {
+  it("tints opaque colours at the default strength, keeps picked alpha", () => {
+    expect(tintColor("#2F5D9E")).toBe("#2f5d9e47"); // 28%
+    expect(tintColor("#ff990080")).toBe("#ff990080");
+    expect(tintColor("#ff9900ff")).toBe("#ff9900ff"); // fully opaque on purpose
+  });
+
+  it("round-trips a picked colour through hue and opacity", () => {
+    const parts = splitAlpha(withAlpha("#FF9900", 0.5));
+    expect(parts?.rgb).toBe("#ff9900");
+    expect(parts?.alpha).toBeCloseTo(0.5, 2);
+    expect(splitAlpha("#ff9900")).toEqual({ rgb: "#ff9900", alpha: 1 });
+  });
+
+  it("clamps opacity and rejects colours it cannot split", () => {
+    expect(withAlpha("#000000", 1.7)).toBe("#000000ff");
+    expect(withAlpha("#000000", -1)).toBe("#00000000");
+    expect(splitAlpha("red")).toBeNull();
+    expect(splitAlpha("#abc")).toBeNull();
   });
 });

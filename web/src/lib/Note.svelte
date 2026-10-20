@@ -4,6 +4,7 @@
   import { rotation, type Task } from "./model";
   import { dueLabel } from "./schedule";
   import { store } from "./sheet.svelte";
+  import { tintStyle } from "./tint";
   import { today } from "./today.svelte";
 
   interface Props {
@@ -15,6 +16,8 @@
   const project = $derived(
     store.sheet.projects?.find((p) => p.id === task.project),
   );
+  /** colours for every state, as --t-* custom properties */
+  const tintVars = $derived(tintStyle(project?.color));
 
   /** below this a press counts as a click, not a drag */
   const DRAG_THRESHOLD_PX = 6;
@@ -140,6 +143,8 @@
   class:dragging
   class:editing
   class:selected={store.selectedId === task.id}
+  class:tinted={tintVars !== undefined}
+  style={tintVars}
   style:left="{task.x * 100}%"
   style:top="{task.y * 100}%"
   style:--rot={rotation(task.id)}
@@ -234,6 +239,56 @@
   /* above overlapping neighbours, so they cannot steal the way to ✓ */
   .note:hover {
     z-index: 5;
+  }
+
+  /* a coloured project tints the scrap with one background per look (open,
+     crossed out) and text colours tint.ts picked to read on it. Hover draws
+     a lift shadow; selection swaps to a background tint.ts moved away from
+     the text colour, so the text keeps its colours and only gains contrast. */
+  .note.tinted {
+    --fg: var(--t-open-fg);
+    --muted: var(--t-open-muted);
+    --selected: var(--t-open-selected);
+    background: var(--t-open-bg);
+    color: var(--fg);
+  }
+
+  /* crossed-out words take the muted colour */
+  .note.tinted.done {
+    --fg: var(--t-done-muted);
+    --muted: var(--t-done-muted);
+    --selected: var(--t-done-selected);
+    background: var(--t-done-bg);
+  }
+
+  .note.tinted.selected {
+    background: var(--selected);
+    box-shadow: inset 0 0 0 1.5px var(--fg);
+  }
+
+  .tinted:hover,
+  .tinted:focus-visible {
+    box-shadow: 0 2px 7px rgb(43 42 38 / 35%);
+  }
+
+  .tinted .project,
+  .tinted .when {
+    color: var(--muted);
+  }
+
+  /* no red text reads at every tint (mid-tones defeat any hue), so on a
+     tint an overdue date becomes a red chip carrying its own contrast */
+  .tinted .when.late {
+    padding: 0 4px;
+    border-radius: 3px;
+    color: #fff;
+    background: var(--accent);
+  }
+
+  /* the computed muted colour already fades it; opacity would undo the
+     contrast guarantee */
+  .tinted.done .txt {
+    opacity: 1;
   }
 
   /* hangs off the right edge; as a child it keeps the note hovered */
