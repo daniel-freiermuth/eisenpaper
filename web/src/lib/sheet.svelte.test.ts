@@ -368,6 +368,59 @@ describe("SheetStore.sync", () => {
     await store.sync();
     expect(store.sheet.tasks).toEqual([]);
   });
+
+  /** Synced to `serverSheet`, then a newer sheet arrives while `t1` is being edited. */
+  async function deferredStore() {
+    const store = await syncedStore();
+    const task = firstTask(store);
+    let resolveGet: (res: Response) => void = () => undefined;
+    fetchMock.mockReset();
+    fetchMock.mockReturnValueOnce(
+      new Promise<Response>((resolve) => (resolveGet = resolve)),
+    );
+    const pending = store.sync();
+    store.startEdit(task);
+    const otherDevice = { ...serverTask, id: "tB", text: "call mum" };
+    resolveGet(
+      reply(
+        200,
+        JSON.stringify({
+          tasks: [serverTask, otherDevice],
+          archive: [],
+          savedAt: 20,
+        }),
+      ),
+    );
+    await pending;
+    expect(store.sheet.tasks.map((t) => t.id)).toEqual(["t1"]);
+    fetchMock.mockImplementation(server(204));
+    return { store, task };
+  }
+
+  it("saves an edit that ends after a newer sheet was deferred on top of that sheet", async () => {
+    const { store, task } = await deferredStore();
+
+    store.finishEdit(task, "file tax return today");
+    await vi.advanceTimersByTimeAsync(300);
+
+    expect(putBodies()).toMatchObject([
+      {
+        tasks: [{ id: "t1", text: "file tax return today" }, { id: "tB" }],
+      },
+    ]);
+  });
+
+  it("adopts a deferred newer sheet when the edit is cancelled", async () => {
+    const { store } = await deferredStore();
+
+    store.cancelEdit();
+    store.toggleDone(firstTask(store));
+    await vi.advanceTimersByTimeAsync(300);
+
+    expect(putBodies()).toMatchObject([
+      { tasks: [{ id: "t1", done: true }, { id: "tB" }] },
+    ]);
+  });
 });
 
 /** A store that has adopted `serverSheet`, with the fetch log cleared. */
