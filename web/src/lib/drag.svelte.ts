@@ -229,8 +229,9 @@ export function draggable(opts: DraggableOptions): Attachment<HTMLElement> {
 
     el.addEventListener("pointerdown", onDown);
     el.addEventListener("contextmenu", onContext);
+    // no end() here: hover-paging unmounts the day a scrap was lifted from,
+    // and the window listeners must still carry that drag to its drop
     return () => {
-      if (drag.current?.id === opts.id) end();
       el.removeEventListener("pointerdown", onDown);
       el.removeEventListener("contextmenu", onContext);
     };

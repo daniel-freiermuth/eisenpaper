@@ -369,17 +369,19 @@ describe("draggable with touch", () => {
 });
 
 describe("draggable lifecycle", () => {
-  it("ends the drag when its lifted scrap is detached", () => {
+  it("carries the drag to its drop when its lifted scrap is detached", () => {
     const { onDrop } = attach(me, "me");
     liftByMouse();
     under = zone;
 
+    // hover-paging unmounts the day the scrap was lifted from
     const cleanup = detach.pop();
     cleanup?.();
-    expect(drag.current).toBeNull();
+    expect(drag.current).toMatchObject({ id: "me" });
 
     fire(document.body, "pointerup", 110, 219);
-    expect(onDrop).not.toHaveBeenCalled();
+    expect(drag.current).toBeNull();
+    expect(onDrop).toHaveBeenCalledExactlyOnceWith(ZONE, 1);
   });
 
   it("leaves another scrap's drag alone when an idle one is detached", () => {
