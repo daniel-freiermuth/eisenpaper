@@ -5,8 +5,11 @@ import { defineConfig } from "vitest/config";
 // so development never touches the real sheet.
 const DEV_BACKEND = "http://127.0.0.1:8742";
 
-export default defineConfig({
+export default defineConfig(({ mode }) => ({
   plugins: [svelte()],
+  // component tests mount Svelte in happy-dom, which needs the client
+  // runtime rather than the server one Node would otherwise resolve
+  resolve: mode === "test" ? { conditions: ["browser"] } : {},
   server: {
     proxy: { "/tasks.json": DEV_BACKEND },
   },
@@ -16,4 +19,4 @@ export default defineConfig({
   test: {
     include: ["src/**/*.test.ts"],
   },
-});
+}));
