@@ -564,6 +564,18 @@ mod tests {
         assert!(leftovers.is_empty(), "stray files: {leftovers:?}");
     }
 
+    #[test]
+    fn write_sheet_through_a_symlink_updates_the_target_and_keeps_the_link() {
+        let dir = scratch("symlink");
+        let target = dir.join("synced.json");
+        fs::write(&target, br#"{"tasks":[]}"#).unwrap();
+        let data = dir.join("tasks.json");
+        std::os::unix::fs::symlink(&target, &data).unwrap();
+        write_sheet(&data, br#"{"tasks":[1]}"#).unwrap();
+        assert!(fs::symlink_metadata(&data).unwrap().file_type().is_symlink());
+        assert_eq!(fs::read_to_string(&target).unwrap(), r#"{"tasks":[1]}"#);
+    }
+
     #[tokio::test]
     async fn sheet_responses_carry_the_marker_the_app_looks_for() {
         let (app, _) = scratch_app("marker");
