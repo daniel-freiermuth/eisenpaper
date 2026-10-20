@@ -323,6 +323,13 @@ fn write_sheet(data: &Path, body: &[u8]) -> Result<(), PutError> {
     let tmp = data.with_file_name(tmp_name);
     let replace = || {
         let mut file = fs::File::create(&tmp)?;
+        // a new file gets the umask's mode: keep the sheet's (e.g. a private
+        // 0600) instead, and set it before the contents go in
+        match fs::metadata(data) {
+            Ok(sheet) => file.set_permissions(sheet.permissions())?,
+            Err(e) if e.kind() == io::ErrorKind::NotFound => {}
+            Err(e) => return Err(e),
+        }
         file.write_all(body)?;
         file.sync_all()?;
         fs::rename(&tmp, data)
