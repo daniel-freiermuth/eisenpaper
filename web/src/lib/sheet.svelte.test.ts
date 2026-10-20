@@ -544,6 +544,87 @@ describe("SheetStore.sync", () => {
   });
 });
 
+describe("SheetStore without a usable localStorage", () => {
+  const quotaExceeded = (): never => {
+    throw new DOMException("quota exceeded", "QuotaExceededError");
+  };
+
+  it("still loads when the browser blocks storage", async () => {
+    vi.stubGlobal("localStorage", undefined);
+    Object.defineProperty(globalThis, "localStorage", {
+      configurable: true,
+      get: () => {
+        throw new DOMException("Access is denied", "SecurityError");
+      },
+    });
+    const store = await loadStore();
+    fetchMock.mockImplementation(server(204));
+    await store.sync();
+
+    expect(store.status).toBe("synced");
+    expect(JSON.parse(store.exportText())).toEqual(serverSheet);
+  });
+
+  it("still saves to the server when the browser copy cannot be written", async () => {
+    const store = await syncedStore();
+    vi.stubGlobal("localStorage", {
+      getItem: (k: string) => storage.get(k) ?? null,
+      setItem: quotaExceeded,
+      removeItem: (k: string) => storage.delete(k),
+    });
+    store.replace({ tasks: [], archive: [] });
+    await vi.advanceTimersByTimeAsync(300);
+
+    expect(putBodies()).toMatchObject([{ tasks: [], archive: [] }]);
+    expect(store.status).toBe("synced");
+  });
+
+  it("finishes adopting a server sheet that cannot be cached", async () => {
+    const store = await loadStore();
+    vi.stubGlobal("localStorage", {
+      getItem: (k: string) => storage.get(k) ?? null,
+      setItem: quotaExceeded,
+      removeItem: (k: string) => storage.delete(k),
+    });
+    fetchMock.mockImplementation(server(204));
+    await store.sync();
+
+    expect(store.status).toBe("synced");
+    expect(JSON.parse(store.exportText())).toEqual(serverSheet);
+  });
+
+  it("keeps another device's task when only the base could be cached", async () => {
+    let cacheFull = false;
+    vi.stubGlobal("localStorage", {
+      getItem: (k: string) => storage.get(k) ?? null,
+      setItem: (k: string, v: string) => {
+        if (cacheFull && k === CACHE_KEY) quotaExceeded();
+        storage.set(k, v);
+      },
+      removeItem: (k: string) => storage.delete(k),
+    });
+    const tasks = fakeServer(serverText);
+    fetchMock.mockImplementation(tasks.handle);
+    const store = await loadStore();
+    await store.sync();
+
+    // another device adds a task; this tab adopts it but can't cache it
+    const added: Task = { ...serverTask, id: "t3", text: "water plants" };
+    tasks.save({ tasks: [serverTask, added], archive: [] });
+    cacheFull = true;
+    await store.sync();
+
+    cacheFull = false;
+    const reloaded = await loadStore();
+    await reloaded.sync();
+
+    expect(tasks.sheet()).toMatchObject({
+      tasks: [{ id: "t1" }, { id: "t3" }],
+    });
+    expect(reloaded.sheet.tasks.map((t) => t.id)).toEqual(["t1", "t3"]);
+  });
+});
+
 /** A store that has adopted `serverSheet`, with the fetch log cleared. */
 async function syncedStore() {
   const store = await loadStore();
