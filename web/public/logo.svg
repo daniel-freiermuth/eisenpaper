@@ -1,0 +1,26 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" role="img" aria-label="eisenpaper">
+  <title>eisenpaper</title>
+  <!-- a scrap of paper laid slightly askew, like the notes on the sheet -->
+  <g transform="rotate(-4 32 32)">
+    <rect x="5" y="5" width="54" height="54" rx="5" fill="#2b2a26" opacity=".12" transform="translate(1.5 2)"/>
+    <rect x="5" y="5" width="54" height="54" rx="5" fill="#f6f1e3" stroke="#b9b29e" stroke-width="1.5"/>
+    <!-- the "do" quadrant: urgent and important, highlighted -->
+    <path d="M34.5 11.5 C41 10.6 48.5 11 53 12.2 C53.6 18 53.4 24.5 52.6 29.4 C46 30.2 39.5 30.1 34.8 29.6 C34.2 23.5 34.1 17 34.5 11.5 Z" fill="#fff3a6"/>
+    <!-- hand-drawn axes -->
+    <g fill="none" stroke="#2b2a26" stroke-width="2.4" stroke-linecap="round">
+      <path d="M32.4 10.5 C31.8 20 32.6 42 31.9 53.5"/>
+      <path d="M10.5 32.3 C20 31.6 42 32.7 53.5 31.8"/>
+    </g>
+    <!-- pencil scraps waiting in the other quadrants -->
+    <g fill="none" stroke="#8a8578" stroke-width="2" stroke-linecap="round">
+      <path d="M13.5 19 L25.5 18.2"/>
+      <path d="M14 24.5 L22 24"/>
+      <path d="M38.5 42 L50 41.4"/>
+      <path d="M13.8 44.5 L24.5 44"/>
+    </g>
+    <!-- crossed out: done -->
+    <path d="M12.6 46.2 L26.4 42.4" stroke="#b03a2e" stroke-width="1.7" stroke-linecap="round" opacity=".9"/>
+    <!-- the tick in the "do" quadrant -->
+    <path d="M38.5 21 L42.6 25.6 L50 15.2" fill="none" stroke="#b03a2e" stroke-width="3.4" stroke-linecap="round" stroke-linejoin="round"/>
+  </g>
+</svg>
