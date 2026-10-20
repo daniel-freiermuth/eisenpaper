@@ -159,7 +159,13 @@ class SheetStore {
       this.status = "error";
       return;
     }
-    const text = res.status === 404 ? null : await res.text();
+    let text: string | null;
+    try {
+      text = res.status === 404 ? null : await res.text();
+    } catch {
+      this.status = "offline"; // the connection dropped mid-body
+      return;
+    }
     // a save of ours landed while the GET was in flight: this response may
     // predate it, and taking its version would only fail our next If-Match
     if (this.#lastServerText !== base) return;
