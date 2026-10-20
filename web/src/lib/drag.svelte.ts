@@ -73,9 +73,17 @@ let edge: { area: HTMLElement; dir: number; since: number } | null = null;
  * of. Merely crossing an edge (tray → days on a phone) must not scroll.
  */
 function autoScroll(d: Lifted): void {
-  const area = document
+  let area = document
     .elementFromPoint(d.x, d.y)
     ?.closest<HTMLElement>("[data-autoscroll]");
+  // an area with nothing to scroll in this layout (a day's list in the
+  // stacked schedule) leaves the edge to the area around it
+  while (
+    area !== undefined &&
+    area !== null &&
+    area.scrollHeight <= area.clientHeight
+  )
+    area = area.parentElement?.closest<HTMLElement>("[data-autoscroll]");
   const r = area?.getBoundingClientRect();
   const dir =
     r === undefined
