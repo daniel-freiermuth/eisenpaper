@@ -117,6 +117,8 @@ export interface DraggableOptions {
 export function draggable(opts: DraggableOptions): Attachment<HTMLElement> {
   return (el) => {
     let press: {
+      /** the pointer that pressed; other fingers' events are not ours */
+      pointerId: number;
       x: number;
       y: number;
       touch: boolean;
@@ -157,12 +159,12 @@ export function draggable(opts: DraggableOptions): Attachment<HTMLElement> {
       drag.current = null;
       removeEventListener("pointermove", onMove);
       removeEventListener("pointerup", onUp);
-      removeEventListener("pointercancel", end);
+      removeEventListener("pointercancel", onCancel);
       removeEventListener("keydown", onKey);
     };
 
     const onMove = (e: PointerEvent): void => {
-      if (press === null) return;
+      if (press?.pointerId !== e.pointerId) return;
       const d = drag.current;
       if (d !== null) {
         d.x = e.clientX;
@@ -177,7 +179,8 @@ export function draggable(opts: DraggableOptions): Attachment<HTMLElement> {
       if (dist >= DRAG_THRESHOLD_PX) lift(press.x, press.y);
     };
 
-    const onUp = (): void => {
+    const onUp = (e: PointerEvent): void => {
+      if (press?.pointerId !== e.pointerId) return;
       const d = drag.current;
       if (d === null) {
         end();
@@ -190,6 +193,10 @@ export function draggable(opts: DraggableOptions): Attachment<HTMLElement> {
       if (zone !== null) opts.onDrop(zone, index);
     };
 
+    const onCancel = (e: PointerEvent): void => {
+      if (e.pointerId === press?.pointerId) end();
+    };
+
     const onKey = (e: KeyboardEvent): void => {
       if (e.key === "Escape") end();
     };
@@ -198,6 +205,7 @@ export function draggable(opts: DraggableOptions): Attachment<HTMLElement> {
       if (e.button !== 0 || drag.current !== null) return;
       const touch = e.pointerType === "touch";
       press = {
+        pointerId: e.pointerId,
         x: e.clientX,
         y: e.clientY,
         touch,
@@ -209,7 +217,7 @@ export function draggable(opts: DraggableOptions): Attachment<HTMLElement> {
       };
       addEventListener("pointermove", onMove);
       addEventListener("pointerup", onUp);
-      addEventListener("pointercancel", end);
+      addEventListener("pointercancel", onCancel);
       addEventListener("keydown", onKey);
     };
 
