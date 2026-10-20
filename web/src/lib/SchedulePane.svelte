@@ -195,7 +195,8 @@
 <style>
   .schedule {
     position: fixed;
-    inset: 0 0 0 var(--tabs-w);
+    inset: 0 var(--pane-right) 0 var(--tabs-w);
+    transition: right 0.2s ease;
     display: grid;
     grid-template-columns: minmax(240px, 320px) 1fr;
   }

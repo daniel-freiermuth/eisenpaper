@@ -18,6 +18,8 @@ export const TaskSchema = v.looseObject({
   day: v.optional(v.pipe(v.string(), v.isoDate())),
   /** position within its day; meaningless without `day` */
   order: v.optional(v.number()),
+  /** free-text annotations; absent = none */
+  note: v.optional(v.string()),
 });
 export type Task = v.InferOutput<typeof TaskSchema>;
 

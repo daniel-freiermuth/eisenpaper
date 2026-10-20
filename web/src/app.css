@@ -7,6 +7,16 @@
   --ok: #47663f;
   --highlight: rgb(255 249 196);
   --tabs-w: 38px;
+  --detail-w: min(360px, 92vw);
+  /* room the panes leave on the right for the detail pane */
+  --pane-right: 0px;
+}
+
+/* phones keep the detail pane as an overlay: there is no room to share */
+@media (width > 700px) {
+  :root.detail-open {
+    --pane-right: var(--detail-w);
+  }
 }
 
 * {
@@ -54,4 +64,38 @@ button {
 
 button:hover {
   background: #fff;
+}
+
+/* the cross-out / uncross button revealed on a hovered or selected task */
+button.check {
+  flex: none;
+  width: 26px;
+  height: 26px;
+  padding: 0;
+  font-size: 15px;
+  line-height: 1;
+  color: var(--ok);
+  border-radius: 50%;
+  background: #fff;
+}
+
+button.check:hover {
+  color: #fff;
+  background: var(--ok);
+  border-color: var(--ok);
+}
+
+/* the global body rules make the page a drawing surface; forms opt out */
+input,
+select,
+textarea {
+  font: inherit;
+  font-size: 16px;
+  color: var(--ink);
+  background: rgb(255 255 255 / 70%);
+  border: 1px solid var(--faint);
+  border-radius: 4px;
+  padding: 4px 8px;
+  user-select: text;
+  touch-action: auto;
 }

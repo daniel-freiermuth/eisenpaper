@@ -12,15 +12,24 @@
   }
   const { task, label, unschedulable = false }: Props = $props();
 
+  /** buttons inside the scrap must neither lift it nor select it */
+  const stop = (e: Event): void => {
+    e.stopPropagation();
+  };
+
   function onDrop(zone: string, index: number): void {
     if (zone === "overdue") return; // past days are not a target
     store.schedule(task.id, zone === "backlog" ? null : zone, index);
   }
 
   function onkeydown(e: KeyboardEvent): void {
-    if (e.key === " " || e.key === "Enter") {
+    if (e.target !== e.currentTarget) return; // a button inside handles its own
+    if (e.key === " ") {
       e.preventDefault();
       store.toggleDone(task);
+    } else if (e.key === "Enter") {
+      e.preventDefault();
+      store.select(task.id);
     }
   }
 </script>
@@ -29,6 +38,7 @@
   class="scrap"
   class:done={task.done}
   class:lifted={drag.current?.id === task.id}
+  class:selected={store.selectedId === task.id}
   data-id={task.id}
   role="button"
   tabindex="0"
@@ -39,7 +49,7 @@
     text: task.text,
     done: task.done,
     onTap: () => {
-      store.toggleDone(task);
+      store.select(task.id);
     },
     onDrop,
   })}
@@ -49,14 +59,21 @@
   {#if label !== undefined}
     <span class="when">{label}</span>
   {/if}
+  <button
+    class="check"
+    title={task.done ? "uncross" : "cross out"}
+    aria-label={task.done ? "uncross" : "cross out"}
+    onpointerdown={stop}
+    onclick={() => {
+      store.toggleDone(task);
+    }}>{task.done ? "↺" : "✓"}</button
+  >
   {#if unschedulable}
     <button
       class="unschedule"
       title="unschedule — back to the backlog"
       aria-label="unschedule"
-      onpointerdown={(e) => {
-        e.stopPropagation();
-      }}
+      onpointerdown={stop}
       onclick={() => {
         store.schedule(task.id, null, 0);
       }}>&times;</button
@@ -84,6 +101,22 @@
   .scrap:hover,
   .scrap:focus-visible {
     background: rgb(from var(--highlight) r g b / 55%);
+  }
+
+  .selected {
+    background: rgb(from var(--highlight) r g b / 80%);
+    box-shadow: inset 0 0 0 1.5px var(--pencil);
+  }
+
+  .check {
+    align-self: center;
+    width: 22px;
+    height: 22px;
+    font-size: 13px;
+  }
+
+  .scrap:not(:hover, :focus-within, .selected) .check {
+    visibility: hidden;
   }
 
   .lifted {
