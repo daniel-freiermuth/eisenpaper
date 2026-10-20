@@ -47,6 +47,8 @@ class SheetStore {
   /** the last GET failed, so tasks.json may hold edits we have not seen */
   #serverFailed = false;
   #lastServerText: string | null = null;
+  /** a newer tasks.json that sync fetched but left alone mid-edit */
+  #deferred: { text: string; sheet: Sheet } | null = null;
   #writeTimer: number | undefined;
 
   #serialize(): string {
@@ -110,6 +112,7 @@ class SheetStore {
     }
     if (res.status === 404) {
       this.#serverFailed = false;
+      this.#deferred = null;
       this.#markSynced(); // nothing on the server to lose
       this.#lastServerText = null; // no sheet on disk yet — create it
       await this.#write();
@@ -121,6 +124,7 @@ class SheetStore {
       return;
     }
     this.#serverFailed = false;
+    this.#deferred = null;
     const text = await res.text();
     if (text === this.#lastServerText) {
       // server unchanged since our last sync: push any local edits whose
@@ -136,10 +140,13 @@ class SheetStore {
       this.status = "error";
       return;
     }
-    // an edit may have begun while the GET was in flight; leave
-    // #lastServerText alone so the next sync weighs this sheet again
+    // an edit may have begun while the GET was in flight; keep this sheet
+    // aside so the edit lands on it once it ends (#endEdit)
     // eslint-disable-next-line @typescript-eslint/no-unnecessary-condition -- both may change during the awaits above
-    if (this.editingId !== null || this.draft !== null) return;
+    if (this.editingId !== null || this.draft !== null) {
+      this.#deferred = { text, sheet: remote };
+      return;
+    }
     this.#lastServerText = text;
     const unsynced = this.#unsynced;
     this.#markSynced();
@@ -208,22 +215,38 @@ class SheetStore {
   finishEdit(task: Task, rawText: string): void {
     const text = rawText.trim();
     const isDraft = this.draft?.id === task.id;
-    this.draft = null;
-    this.editingId = null;
+    this.#endEdit();
     if (isDraft) {
       if (text === "") return;
       this.sheet.tasks.push({ ...task, text });
     } else if (text === "") {
       this.#removeById(task.id);
     } else {
-      task.text = text;
+      // the sheet may have been replaced by #endEdit: edit its copy
+      const current = this.sheet.tasks.find((t) => t.id === task.id);
+      if (current === undefined) this.sheet.tasks.push({ ...task, text });
+      else current.text = text;
     }
     this.commit();
   }
 
   cancelEdit(): void {
+    this.#endEdit();
+  }
+
+  /** Closes the editor, then adopts a newer sheet that sync deferred meanwhile. */
+  #endEdit(): void {
     this.draft = null;
     this.editingId = null;
+    const deferred = this.#deferred;
+    this.#deferred = null;
+    if (deferred === null || this.#unsynced) return; // #write merges first
+    if (reconcile($state.snapshot(this.sheet), deferred.sheet) !== "adopt")
+      return;
+    this.#lastServerText = deferred.text;
+    this.sheet = deferred.sheet;
+    localStorage.setItem(CACHE_KEY, deferred.text);
+    this.status = "synced";
   }
 
   /** Live drag update; the caller commits once the drag ends. */
