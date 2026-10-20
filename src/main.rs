@@ -634,6 +634,43 @@ mod tests {
         assert_eq!(fs::read(&data).unwrap().len(), MAX_SHEET_BYTES);
     }
 
+    #[tokio::test]
+    async fn put_of_invalid_json_is_a_marked_400_and_keeps_the_sheet() {
+        let (app, data) = scratch_app("put-invalid");
+        fs::write(&data, r#"{"tasks":[]}"#).unwrap();
+        let res = call(&app, "PUT", "/tasks.json", b"not json{{".to_vec()).await;
+        assert_eq!(res.status(), StatusCode::BAD_REQUEST);
+        assert_eq!(res.headers()["x-eisenpaper"], "1");
+        assert_eq!(fs::read_to_string(&data).unwrap(), r#"{"tasks":[]}"#);
+    }
+
+    #[tokio::test]
+    async fn put_whose_rename_fails_is_a_marked_500_and_leaves_no_temp_behind() {
+        let (app, data) = scratch_app("put-rename");
+        // the temp file can be written, but renaming a file onto a directory fails
+        fs::create_dir_all(&data).unwrap();
+        let res = call(&app, "PUT", "/tasks.json", b"{}".to_vec()).await;
+        assert_eq!(res.status(), StatusCode::INTERNAL_SERVER_ERROR);
+        assert_eq!(res.headers()["x-eisenpaper"], "1");
+        assert!(data.is_dir());
+        // a stray temp file would be synced next to the real sheet
+        let tmp = data.with_file_name(".tasks.json.tmp");
+        assert!(!tmp.exists(), "{} left behind", tmp.display());
+    }
+
+    #[test]
+    fn write_sheet_reports_unwritable_paths_as_io_errors() {
+        // no file name to derive the temp name from: refused before any write
+        assert!(matches!(
+            write_sheet(Path::new("/"), b"{}"),
+            Err(PutError::Io(_))
+        ));
+        // the temp file itself cannot be created
+        let data = scratch("missing-dir").join("gone").join("tasks.json");
+        assert!(matches!(write_sheet(&data, b"{}"), Err(PutError::Io(_))));
+        assert!(!data.exists());
+    }
+
     #[test]
     fn parse_args_defaults_and_overrides() {
         let Ok(Cli::Run(cfg)) = args(&[]) else {
