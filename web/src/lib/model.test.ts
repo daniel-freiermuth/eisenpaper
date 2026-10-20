@@ -94,6 +94,34 @@ describe("parseSheet", () => {
   ])("rejects %s", (_name, text) => {
     expect(parseSheet(text)).toBeNull();
   });
+
+  // JSON.parse turns an overflowing literal into ±Infinity, which
+  // JSON.stringify would write back as null — a sheet no client can load.
+  it.each([
+    [
+      "x",
+      `{"tasks":[{"id":"t","text":"x","x":1e999,"y":0,"done":false,"created":1}],"archive":[]}`,
+    ],
+    [
+      "y",
+      `{"tasks":[{"id":"t","text":"x","x":0,"y":-1e999,"done":false,"created":1}],"archive":[]}`,
+    ],
+    [
+      "created",
+      `{"tasks":[{"id":"t","text":"x","x":0,"y":0,"done":false,"created":1e999}],"archive":[]}`,
+    ],
+    [
+      "doneAt",
+      `{"tasks":[{"id":"t","text":"x","x":0,"y":0,"done":true,"created":1,"doneAt":1e999}],"archive":[]}`,
+    ],
+    [
+      "order",
+      `{"tasks":[{"id":"t","text":"x","x":0,"y":0,"done":false,"created":1,"order":-1e999}],"archive":[]}`,
+    ],
+    ["archive at", `{"tasks":[],"archive":[{"at":1e999,"tasks":[]}]}`],
+  ])("rejects a non-finite %s", (_field, text) => {
+    expect(parseSheet(text)).toBeNull();
+  });
 });
 
 describe("mergeSheets", () => {
