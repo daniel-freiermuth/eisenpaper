@@ -4,7 +4,7 @@
 //! atomically. Every other `GET` is a file from the web directory.
 
 use std::fs;
-use std::io;
+use std::io::{self, Write as _};
 use std::path::{Path, PathBuf};
 use std::process::ExitCode;
 use std::sync::Arc;
@@ -205,6 +205,10 @@ enum PutError {
 
 /// Writes the sheet atomically (temp file + rename) after validating it, so
 /// a crash or a concurrent reader (Syncthing) never sees a partial sheet.
+///
+/// The temp file is fsynced before the rename and the directory after it:
+/// otherwise a power loss can persist the rename but not the data, leaving
+/// an empty or truncated sheet in place of the old one.
 fn write_sheet(data: &Path, body: &[u8]) -> Result<(), PutError> {
     if serde_json::from_slice::<serde_json::Value>(body).is_err() {
         return Err(PutError::InvalidJson);
@@ -216,12 +220,25 @@ fn write_sheet(data: &Path, body: &[u8]) -> Result<(), PutError> {
     tmp_name.push(name);
     tmp_name.push(".tmp");
     let tmp = data.with_file_name(tmp_name);
-    fs::write(&tmp, body).map_err(PutError::Io)?;
-    fs::rename(&tmp, data).map_err(|e| {
-        // best effort: the rename error is what matters to the caller
+    let replace = || {
+        let mut file = fs::File::create(&tmp)?;
+        file.write_all(body)?;
+        file.sync_all()?;
+        fs::rename(&tmp, data)
+    };
+    replace().map_err(|e| {
+        // best effort: the write or rename error is what matters to the caller
         drop(fs::remove_file(&tmp));
         PutError::Io(e)
-    })
+    })?;
+    // a bare file name has an empty parent: the current directory
+    let dir = match data.parent() {
+        Some(dir) if !dir.as_os_str().is_empty() => dir,
+        _ => Path::new("."),
+    };
+    fs::File::open(dir)
+        .and_then(|dir| dir.sync_all())
+        .map_err(PutError::Io)
 }
 
 /// `PUT /tasks.json`: stores a body of at most [`MAX_SHEET_BYTES`], read
