@@ -654,6 +654,20 @@ mod tests {
         assert_eq!(fs::read_to_string(&target).unwrap(), sheet);
     }
 
+    #[test]
+    fn write_sheet_through_a_dangling_symlink_creates_the_target_and_keeps_the_link() {
+        let dir = scratch("dangling-symlink");
+        // the link exists before its target, e.g. before Syncthing delivers it
+        let target = dir.join("synced.json");
+        let data = dir.join("tasks.json");
+        std::os::unix::fs::symlink(&target, &data).unwrap();
+        let sheet = r#"{"tasks":[],"archive":[],"savedAt":1}"#;
+        write_sheet(&data, sheet.as_bytes()).unwrap();
+        let link = fs::symlink_metadata(&data).unwrap();
+        assert!(link.file_type().is_symlink());
+        assert_eq!(fs::read_to_string(&target).unwrap(), sheet);
+    }
+
     #[tokio::test]
     async fn sheet_responses_carry_the_marker_the_app_looks_for() {
         let (app, _) = scratch_app("marker");
