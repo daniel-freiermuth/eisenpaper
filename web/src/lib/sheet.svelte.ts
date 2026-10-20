@@ -156,12 +156,23 @@ class SheetStore {
         (local.projects?.length ?? 0) > 0)
     ) {
       // everything here was written without ever seeing the server's
-      // sheet: add it to that sheet rather than replace it
-      const projects = [...(remote.projects ?? []), ...(local.projects ?? [])];
+      // sheet: add it to that sheet rather than replace it, skipping what
+      // the server already holds (an imported export of this very sheet)
+      // so no list key repeats
+      const ids = new Set(remote.tasks.map((t) => t.id));
+      const ats = new Set(remote.archive.map((a) => a.at));
+      const projectIds = new Set((remote.projects ?? []).map((p) => p.id));
+      const projects = [
+        ...(remote.projects ?? []),
+        ...(local.projects ?? []).filter((p) => !projectIds.has(p.id)),
+      ];
       this.sheet = {
         ...remote,
-        tasks: [...remote.tasks, ...local.tasks],
-        archive: [...remote.archive, ...local.archive],
+        tasks: [...remote.tasks, ...local.tasks.filter((t) => !ids.has(t.id))],
+        archive: [
+          ...remote.archive,
+          ...local.archive.filter((a) => !ats.has(a.at)),
+        ],
         ...(projects.length > 0 ? { projects } : {}),
       };
       this.commit();
