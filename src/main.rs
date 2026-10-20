@@ -19,7 +19,11 @@ use axum::http::header::{CACHE_CONTROL, CONTENT_TYPE, ETAG, IF_MATCH, IF_NONE_MA
 use axum::http::{HeaderMap, HeaderName, HeaderValue, StatusCode, Uri};
 use axum::response::{IntoResponse, Response};
 use axum::routing::get;
+use axum::serve::Listener;
 use axum::{Extension, Router};
+use hyper::server::conn::http1;
+use hyper_util::rt::{TokioIo, TokioTimer};
+use hyper_util::service::TowerToHyperService;
 use serde::Deserialize;
 use serde::de::IgnoredAny;
 use tokio::net::TcpListener;
@@ -39,6 +43,11 @@ const MAX_UPLOADS: usize = 2;
 /// refused with 408, so stalled clients cannot pin a buffer or a slot (nor
 /// keep a queued upload waiting) for longer than this.
 const BODY_TIMEOUT: Duration = Duration::from_secs(30);
+/// How long a connection may take to send a request head, counted from when
+/// the server starts waiting for one: on a new connection and after every
+/// response. Idle keep-alive and stalled-header connections are closed after
+/// this, so they cannot pile up and pin sockets and header buffers.
+const HEADER_TIMEOUT: Duration = Duration::from_secs(30);
 
 /// Help text for `--help` and argument errors.
 const USAGE: &str = "\
@@ -429,6 +438,23 @@ fn app(cfg: Arc<Config>) -> Router {
         .with_state(cfg)
 }
 
+/// Serves `app` over HTTP/1.1 on every connection `listener` accepts.
+///
+/// Unlike `axum::serve`, hyper gets a timer here, which is what makes it
+/// enforce [`HEADER_TIMEOUT`]. Accept errors are retried by the
+/// [`Listener`] impl (with a backoff for `TcpListener`).
+async fn serve(mut listener: impl Listener, app: Router) -> ! {
+    loop {
+        let (io, _addr) = listener.accept().await;
+        let conn = http1::Builder::new()
+            .timer(TokioTimer::new())
+            .header_read_timeout(HEADER_TIMEOUT)
+            .serve_connection(TokioIo::new(io), TowerToHyperService::new(app.clone()));
+        // a failed or timed-out connection only concerns its own client
+        drop(tokio::spawn(async move { drop(conn.await) }));
+    }
+}
+
 // one thread: connections are served concurrently, but handlers never run in parallel
 #[tokio::main(flavor = "current_thread")]
 async fn main() -> ExitCode {
@@ -466,11 +492,7 @@ async fn main() -> ExitCode {
         cfg.port,
         cfg.data.display()
     );
-    if let Err(e) = axum::serve(listener, app(Arc::new(cfg))).await {
-        eprintln!("server failed: {e}");
-        return ExitCode::FAILURE;
-    }
-    ExitCode::SUCCESS
+    serve(listener, app(Arc::new(cfg))).await
 }
 
 #[cfg(test)]
@@ -543,7 +565,7 @@ mod tests {
     /// only skips ahead once the server is really waiting.
     struct Pipes(tokio::sync::mpsc::UnboundedReceiver<DuplexStream>);
 
-    impl axum::serve::Listener for Pipes {
+    impl Listener for Pipes {
         type Io = DuplexStream;
         type Addr = ();
 
@@ -563,9 +585,7 @@ mod tests {
     fn spawn_server(name: &str) -> (UnboundedSender<DuplexStream>, PathBuf) {
         let (app, data) = scratch_app(name);
         let (connect, pipes) = tokio::sync::mpsc::unbounded_channel();
-        drop(tokio::spawn(
-            async move { axum::serve(Pipes(pipes), app).await },
-        ));
+        drop(tokio::spawn(serve(Pipes(pipes), app)));
         (connect, data)
     }
 
@@ -666,7 +686,7 @@ mod tests {
     /// still open at the deadline.
     async fn closed(conn: &mut DuplexStream) {
         let mut rest = Vec::new();
-        let _len = tokio::time::timeout(BODY_TIMEOUT * 2, conn.read_to_end(&mut rest))
+        let _len = tokio::time::timeout(HEADER_TIMEOUT * 2, conn.read_to_end(&mut rest))
             .await
             .expect("connection still open at the deadline")
             .unwrap();
@@ -675,8 +695,10 @@ mod tests {
     #[tokio::test(start_paused = true)]
     async fn connection_that_never_finishes_its_request_head_is_closed() {
         let (server, _) = spawn_server("partial-head");
+        let start = tokio::time::Instant::now();
         let mut conn = send(&server, b"PUT /tasks.json HTTP/1.1\r\n").await;
         closed(&mut conn).await;
+        assert!(start.elapsed() >= HEADER_TIMEOUT);
     }
 
     #[tokio::test(start_paused = true)]
@@ -689,7 +711,9 @@ mod tests {
         .await;
         let res = response(&mut conn).await;
         assert!(res.starts_with("HTTP/1.1 204"), "{res}");
+        let idle = tokio::time::Instant::now();
         closed(&mut conn).await;
+        assert!(idle.elapsed() >= HEADER_TIMEOUT);
     }
 
     #[test]
