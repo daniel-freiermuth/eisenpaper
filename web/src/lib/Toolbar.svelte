@@ -60,7 +60,14 @@
     const file = fileInput?.files?.[0];
     if (file === undefined || fileInput === undefined) return;
     fileInput.value = "";
-    const sheet = parseSheet(await file.text());
+    let text: string;
+    try {
+      text = await file.text();
+    } catch {
+      alert("import failed: the file could not be read");
+      return;
+    }
+    const sheet = parseSheet(text);
     if (sheet === null) {
       alert("import failed: not an eisenpaper sheet");
       return;
