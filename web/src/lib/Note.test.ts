@@ -283,6 +283,23 @@ describe("Note drag versus click", () => {
     expect(store.selectedId).toBeNull();
   });
 
+  it("edits on a double-click without selecting, so the panes keep still under the second click", () => {
+    // selecting opens the detail pane, which on wide screens narrows the
+    // priority pane and slides every note left mid-gesture
+    pointer("pointerdown", 100, 100);
+    pointer("pointerup", 100, 100);
+    expect(store.selectedId).toBeNull();
+    pointer("pointerdown", 100, 100);
+    pointer("pointerup", 100, 100);
+    note().dispatchEvent(new MouseEvent("dblclick", { bubbles: true }));
+    vi.runAllTimers();
+    flushSync();
+
+    expect(store.editingId).toBe("t1");
+    expect(store.draft).toBeNull();
+    expect(store.selectedId).toBeNull();
+  });
+
   it("moves the note from the threshold on and commits once on release", () => {
     pointer("pointerdown", 100, 100);
     pointer("pointermove", 106, 100); // exactly 6px
