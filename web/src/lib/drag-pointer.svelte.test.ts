@@ -441,4 +441,53 @@ describe("draggable lifecycle", () => {
 
     expect(onTap).not.toHaveBeenCalled();
   });
+
+  it.each([
+    [
+      "mouse",
+      {},
+      () => {
+        fire(document.body, "pointermove", 116, 120); // past the threshold
+      },
+    ],
+    [
+      "touch",
+      touch,
+      () => {
+        vi.advanceTimersByTime(280); // the long press
+      },
+    ],
+  ])(
+    "drops a pending %s press when its scrap leaves the page",
+    (_, init, wouldLift) => {
+      const { onTap, onDrop } = attach(me, "me");
+      fire(me, "pointerdown", 110, 120, init);
+
+      // a synced delete or move unmounts the scrap before it lifted
+      me.remove();
+      detach.pop()?.();
+      wouldLift();
+      expect(drag.current).toBeNull();
+
+      under = zone;
+      fire(document.body, "pointerup", 110, 219, init);
+      expect(onTap).not.toHaveBeenCalled();
+      expect(onDrop).not.toHaveBeenCalled();
+    },
+  );
+
+  it("keeps a pending press when its attachment re-runs on the same scrap", () => {
+    const { onDrop } = attach(me, "me");
+    fire(me, "pointerdown", 110, 120, touch);
+
+    // a synced edit re-runs the attachment; the scrap stays on the page
+    detach.pop()?.();
+    attach(me, "me");
+    vi.advanceTimersByTime(280);
+    expect(drag.current).toMatchObject({ id: "me" });
+
+    under = zone;
+    fire(document.body, "pointerup", 110, 219, touch);
+    expect(onDrop).toHaveBeenCalledExactlyOnceWith(ZONE, 1);
+  });
 });
