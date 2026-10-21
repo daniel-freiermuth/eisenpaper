@@ -120,6 +120,26 @@ describe("Toolbar import", () => {
     expect(input.value).toBe("");
   });
 
+  it("alerts when the picked file cannot be read and keeps the sheet", async () => {
+    // what File.text() does when the file was moved, deleted or changed
+    // between picking it and reading it
+    vi.spyOn(File.prototype, "text").mockRejectedValue(
+      new DOMException("the file could not be read", "NotReadableError"),
+    );
+
+    const input = choose(JSON.stringify(imported));
+
+    await vi.waitFor(() => {
+      expect(alert).toHaveBeenCalledWith(
+        "import failed: the file could not be read",
+      );
+    });
+    expect(confirm).not.toHaveBeenCalled();
+    expect(commit).not.toHaveBeenCalled();
+    expect(store.sheet).toEqual(current());
+    expect(input.value).toBe("");
+  });
+
   it("reports the imported counts and replaces the sheet once confirmed", async () => {
     choose(JSON.stringify(imported));
 
