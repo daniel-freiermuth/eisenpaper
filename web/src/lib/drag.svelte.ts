@@ -125,9 +125,17 @@ export function draggable(opts: DraggableOptions): Attachment<HTMLElement> {
       timer: number | undefined;
     } | null = null;
     let frame = 0;
+    /** whether `drag.current` is this scrap; other fingers may press others */
+    let lifted = false;
 
     const lift = (x: number, y: number): void => {
+      // another finger's scrap is already up: this press is spent
+      if (drag.current !== null) {
+        end();
+        return;
+      }
       const r = el.getBoundingClientRect();
+      lifted = true;
       drag.current = {
         id: opts.id,
         text: opts.text,
@@ -155,9 +163,12 @@ export function draggable(opts: DraggableOptions): Attachment<HTMLElement> {
     const end = (): void => {
       if (press !== null) clearTimeout(press.timer);
       press = null;
-      cancelAnimationFrame(frame);
-      drag.current = null;
-      edge = null;
+      if (lifted) {
+        cancelAnimationFrame(frame);
+        drag.current = null;
+        edge = null;
+        lifted = false;
+      }
       removeEventListener("pointermove", onMove);
       removeEventListener("pointerup", onUp);
       removeEventListener("pointercancel", onCancel);
@@ -166,7 +177,7 @@ export function draggable(opts: DraggableOptions): Attachment<HTMLElement> {
 
     const onMove = (e: PointerEvent): void => {
       if (press?.pointerId !== e.pointerId) return;
-      const d = drag.current;
+      const d = lifted ? drag.current : null;
       if (d !== null) {
         d.x = e.clientX;
         d.y = e.clientY;
@@ -182,7 +193,7 @@ export function draggable(opts: DraggableOptions): Attachment<HTMLElement> {
 
     const onUp = (e: PointerEvent): void => {
       if (press?.pointerId !== e.pointerId) return;
-      const d = drag.current;
+      const d = lifted ? drag.current : null;
       if (d === null) {
         end();
         opts.onTap();
