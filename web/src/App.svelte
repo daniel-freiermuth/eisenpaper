@@ -16,14 +16,26 @@
 
   let archiveOpen = $state(false);
   let settingsOpen = $state(false);
+  /** Storage the browser blocks degrades to the default pane. */
+  function savedPane(): string | null {
+    try {
+      return localStorage.getItem(PANE_KEY);
+    } catch (e) {
+      console.warn("browser storage unavailable", e);
+      return null;
+    }
+  }
+
   let pane = $state(
-    localStorage.getItem(PANE_KEY) === "schedule"
-      ? ("schedule" as const)
-      : ("priority" as const),
+    savedPane() === "schedule" ? ("schedule" as const) : ("priority" as const),
   );
 
   $effect(() => {
-    localStorage.setItem(PANE_KEY, pane);
+    try {
+      localStorage.setItem(PANE_KEY, pane);
+    } catch (e) {
+      console.warn("saving the open pane in the browser failed", e);
+    }
   });
 
   // the panes make room for the detail pane (see --pane-right in app.css)
