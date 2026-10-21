@@ -175,6 +175,12 @@ class SheetStore {
     this.#etag = res.headers.get("etag");
     this.#lastServerText = text;
     this.#persist();
+    if (this.#serialize() !== text) {
+      // the sheet changed while this PUT was in flight, and the write of
+      // that change may have been skipped as matching the older server text
+      await this.#write(retries);
+      return;
+    }
     this.status = "synced";
   }
 
