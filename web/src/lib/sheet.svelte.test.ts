@@ -702,6 +702,142 @@ describe("SheetStore.commit", () => {
   });
 });
 
+/** A store holding `serverTask` plus a second open note, both on the server. */
+async function twoTaskStore() {
+  const store = await syncedStore();
+  store.addDraft(0.2, 0.2);
+  const draft = store.draft;
+  if (draft === null) throw new Error("no draft");
+  store.finishEdit(draft, "buy milk");
+  await vi.advanceTimersByTimeAsync(300);
+  expect(puts()).toHaveLength(1);
+  fetchMock.mockClear();
+  return store;
+}
+
+describe("SheetStore.replace", () => {
+  const imported: Sheet = {
+    tasks: [{ ...serverTask, id: "imp", text: "renew passport" }],
+    archive: [],
+  };
+
+  it("keeps the import over the synced sheet when merging another device's save", async () => {
+    const tasks = fakeServer(serverText);
+    const store = await loadStore();
+    fetchMock.mockImplementation(tasks.handle);
+    await store.sync();
+    fetchMock.mockClear();
+
+    store.replace(structuredClone(imported));
+    const other: Task = { ...serverTask, id: "t3", text: "water plants" };
+    tasks.save({ tasks: [serverTask, other], archive: [] });
+    await store.sync();
+
+    // the import replaced t1, so the merge must not bring it back
+    expect(store.sheet.tasks.map((t) => t.id).sort()).toEqual(["imp", "t3"]);
+    expect(tasks.sheet()).toEqual(store.sheet);
+    expect(store.status).toBe("synced");
+    await vi.advanceTimersByTimeAsync(1000);
+    expect(puts()).toHaveLength(1);
+  });
+
+  it.each([
+    [
+      "a note is being edited",
+      (s: Store): void => {
+        s.startEdit(firstTask(s));
+      },
+    ],
+    [
+      "a new note is being typed",
+      (s: Store): void => {
+        s.addDraft(0.5, 0.5);
+      },
+    ],
+  ])(
+    "ends the edit when %s so sync is no longer held back",
+    async (_, begin) => {
+      const store = await syncedStore();
+      begin(store);
+
+      store.replace(structuredClone(imported));
+
+      expect(store.editingId).toBeNull();
+      expect(store.draft).toBeNull();
+      await store.sync();
+      expect(putBodies()).toMatchObject([{ tasks: [{ id: "imp" }] }]);
+    },
+  );
+});
+
+describe("SheetStore.freshSheet", () => {
+  it("leaves the sheet alone and saves nothing when nothing is crossed out", async () => {
+    const store = await twoTaskStore();
+    const before = store.exportText();
+
+    expect(store.freshSheet()).toBe(0);
+
+    expect(store.exportText()).toBe(before);
+    await vi.advanceTimersByTimeAsync(1000);
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  it("archives the crossed-out tasks, keeps the open ones and saves once", async () => {
+    const store = await twoTaskStore();
+    store.toggleDone(firstTask(store));
+    const open = { ...store.sheet.tasks[1] };
+    vi.setSystemTime(500);
+
+    expect(store.freshSheet()).toBe(1);
+
+    expect(store.sheet.tasks).toEqual([open]);
+    expect(store.sheet.archive).toMatchObject([
+      { at: 500, tasks: [{ id: "t1", done: true }] },
+    ]);
+    await vi.advanceTimersByTimeAsync(1000);
+    expect(putBodies()).toEqual([
+      {
+        tasks: [open],
+        archive: [{ at: 500, tasks: [expect.objectContaining({ id: "t1" })] }],
+      },
+    ]);
+  });
+});
+
+describe("SheetStore.toggleDone", () => {
+  it("drops the done timestamp when a task is un-crossed", async () => {
+    const store = await syncedStore();
+    const task = firstTask(store);
+    vi.setSystemTime(700);
+
+    store.toggleDone(task);
+    expect(task).toMatchObject({ done: true, doneAt: 700 });
+    store.toggleDone(task);
+
+    expect(task.done).toBe(false);
+    expect("doneAt" in task).toBe(false);
+    // back to exactly what the server holds, so there is nothing to save
+    expect(store.exportText()).toBe(serverText);
+    await vi.advanceTimersByTimeAsync(300);
+    expect(puts()).toEqual([]);
+    expect(store.status).toBe("synced");
+  });
+});
+
+describe("SheetStore.remove", () => {
+  it("tears off only the matching task and saves the result", async () => {
+    const store = await twoTaskStore();
+    const open = { ...store.sheet.tasks[1] };
+
+    store.remove(firstTask(store));
+
+    expect(store.sheet.tasks).toEqual([open]);
+    await vi.advanceTimersByTimeAsync(300);
+    expect(putBodies()).toMatchObject([{ tasks: [open] }]);
+    expect(putBodies()).toHaveLength(1);
+  });
+});
+
 describe("SheetStore.start", () => {
   let win: EventTarget;
   let doc: EventTarget & { visibilityState: DocumentVisibilityState };
