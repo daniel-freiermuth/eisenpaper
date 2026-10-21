@@ -230,7 +230,9 @@ function mergeByKey<T>(
  * Tasks and projects merge by `id` and field by field, archive entries by
  * `at`, so edits to different items or fields on two devices all survive.
  * Only when both changed the same field does the local value win; an item
- * one side deleted stays deleted unless the other side changed it.
+ * one side deleted stays deleted unless the other side changed it. A
+ * project that ends up sharing a name (ignoring case) with an earlier one
+ * is folded into it, its tasks following.
  */
 export function mergeSheets(base: Sheet, local: Sheet, remote: Sheet): Sheet {
   const merged: Sheet = {
@@ -251,13 +253,34 @@ export function mergeSheets(base: Sheet, local: Sheet, remote: Sheet): Sheet {
     ),
   };
   if (local.projects !== undefined || remote.projects !== undefined) {
+    // names are unique ignoring case: a project merged in under a name an
+    // earlier one (remote order first) already uses is folded into it
+    const byName = new Map<string, string>();
+    const folded = new Map<string, string>();
     merged.projects = mergeByKey(
       base.projects ?? [],
       local.projects ?? [],
       remote.projects ?? [],
       (p) => p.id,
       mergeFields,
-    );
+    ).filter((p) => {
+      const key = p.name.toLocaleLowerCase();
+      const kept = byName.get(key);
+      if (kept === undefined) byName.set(key, p.id);
+      else folded.set(p.id, kept);
+      return kept === undefined;
+    });
+    if (folded.size > 0) {
+      const repoint = (t: Task): Task => {
+        const to = t.project === undefined ? undefined : folded.get(t.project);
+        return to === undefined ? t : { ...t, project: to };
+      };
+      merged.tasks = merged.tasks.map(repoint);
+      merged.archive = merged.archive.map((e) => ({
+        ...e,
+        tasks: e.tasks.map(repoint),
+      }));
+    }
   }
   return merged;
 }
