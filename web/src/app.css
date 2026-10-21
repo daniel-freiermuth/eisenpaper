@@ -12,8 +12,10 @@
   --pane-right: 0px;
 }
 
-/* phones keep the detail pane as an overlay: there is no room to share */
-@media (width > 700px) {
+/* narrow screens keep the detail pane as an overlay: there is no room to
+   share. Sharing starts where the panes still get the width they have at
+   the smallest non-phone viewport (701px): 700px + 360px of --detail-w */
+@media (width > 1060px) {
   :root.detail-open {
     --pane-right: var(--detail-w);
   }
