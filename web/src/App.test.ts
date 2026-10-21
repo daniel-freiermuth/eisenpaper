@@ -23,7 +23,7 @@ beforeEach(() => {
 });
 
 afterEach(() => {
-  if (app !== undefined) unmount(app);
+  if (app !== undefined) void unmount(app);
   app = undefined;
   document.body.replaceChildren();
   vi.unstubAllGlobals();
