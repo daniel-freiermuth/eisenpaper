@@ -417,6 +417,21 @@ describe("draggable lifecycle", () => {
     expect(drag.current).toMatchObject({ id: "me" });
   });
 
+  it("still vetoes scrolling when its lifted scrap is detached mid-touch", () => {
+    attach(me, "me");
+    fire(me, "pointerdown", 110, 120, touch);
+    vi.advanceTimersByTime(280);
+
+    // hover-paging unmounts the day; the finger's touchmoves keep targeting
+    // the detached card, whose event path no longer reaches document
+    detach.pop()?.();
+    me.remove();
+    const e = new Event("touchmove", { bubbles: true, cancelable: true });
+    me.dispatchEvent(e);
+
+    expect(e.defaultPrevented).toBe(true);
+  });
+
   it("stops listening for presses once detached", () => {
     const { onTap } = attach(me, "me");
     detach.pop()?.();
