@@ -10,6 +10,7 @@ import {
   type MockInstance,
 } from "vitest";
 
+import DetailPane from "./DetailPane.svelte";
 import PriorityPane from "./PriorityPane.svelte";
 import { store } from "./sheet.svelte";
 
@@ -195,6 +196,26 @@ describe("Note in-place editor", () => {
     expect(task().text).toBe("file taxes by friday");
     expect(store.editingId).toBeNull();
     expect(commit).toHaveBeenCalledOnce();
+  });
+
+  it("keeps the detail pane open when Escape discards an edit", () => {
+    const detail = mount(DetailPane, {
+      target: document.body,
+      props: { onManageProjects: () => undefined },
+    });
+    try {
+      store.select("t1");
+      press(startEdit(), "Escape");
+
+      expect(store.editingId).toBeNull();
+      expect(store.selectedId).toBe("t1");
+
+      // with no edit running, Escape is the pane's again
+      press(document.body, "Escape");
+      expect(store.selectedId).toBeNull();
+    } finally {
+      void unmount(detail);
+    }
   });
 
   it("leaves the native text menu to a right-click in the editor", () => {
