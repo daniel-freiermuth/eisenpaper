@@ -610,12 +610,13 @@ describe("SheetStore.sync", () => {
     expect(store.sheet.tasks.map((t) => t.id)).toContain("t1");
     expect(store.editingId).toBe("t1");
 
-    // the deletion is adopted by the first sync after the edit ends
-    store.cancelEdit();
+    // ending the edit runs the sync it held back, adopting the deletion
     fetchMock.mockReset();
     fetchMock.mockResolvedValue(reply(200, emptyText));
-    await store.sync();
-    expect(store.sheet.tasks).toEqual([]);
+    store.cancelEdit();
+    await vi.waitFor(() => {
+      expect(store.sheet.tasks).toEqual([]);
+    });
   });
 });
 
