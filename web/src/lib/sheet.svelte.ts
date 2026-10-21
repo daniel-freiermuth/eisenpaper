@@ -92,6 +92,8 @@ class SheetStore {
   #writeTimer: number | undefined;
   /** settles once our PUT in flight is answered; null = none in flight */
   #putting: Promise<void> | null = null;
+  /** an edit turned the last pull away; ending the edit runs it */
+  #pullHeld = false;
 
   #serialize(): string {
     return JSON.stringify($state.snapshot(this.sheet), null, 2);
@@ -182,7 +184,11 @@ class SheetStore {
   }
 
   async #pull(retries: number): Promise<void> {
-    if (this.editingId !== null || this.draft !== null) return; // never yank a note mid-edit
+    if (this.editingId !== null || this.draft !== null) {
+      this.#pullHeld = true; // never yank a note mid-edit
+      return;
+    }
+    this.#pullHeld = false;
     const base = this.#lastServerText;
     let res: Response;
     try {
@@ -235,7 +241,10 @@ class SheetStore {
     // an edit may have begun while the GET was in flight; leave
     // #lastServerText alone so the next sync merges this sheet again
     // eslint-disable-next-line @typescript-eslint/no-unnecessary-condition -- both may change during the awaits above
-    if (this.editingId !== null || this.draft !== null) return;
+    if (this.editingId !== null || this.draft !== null) {
+      this.#pullHeld = true;
+      return;
+    }
     const merged = mergeSheets(
       (base === null ? null : parseSheet(base)) ?? emptySheet(),
       $state.snapshot(this.sheet),
@@ -298,7 +307,10 @@ class SheetStore {
     this.draft = null;
     this.editingId = null;
     if (isDraft) {
-      if (text === "") return;
+      if (text === "") {
+        this.#resumePull();
+        return;
+      }
       this.sheet.tasks.push({ ...task, text });
     } else if (text === "") {
       this.#removeById(task.id);
@@ -311,6 +323,12 @@ class SheetStore {
   cancelEdit(): void {
     this.draft = null;
     this.editingId = null;
+    this.#resumePull();
+  }
+
+  /** An edit that ended without a commit lets the pull it held back run. */
+  #resumePull(): void {
+    if (this.#pullHeld) void this.sync();
   }
 
   /** Live drag update; the caller commits once the drag ends. */
