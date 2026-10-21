@@ -39,14 +39,11 @@ class DragState {
 export const drag = new DragState();
 
 // Once a scrap is lifted, a touch drag must not also scroll the page. Only a
-// non-passive document listener can veto that once the gesture is underway.
-document.addEventListener(
-  "touchmove",
-  (e) => {
-    if (drag.current !== null) e.preventDefault();
-  },
-  { passive: false },
-);
+// non-passive touchmove listener can veto that once the gesture is underway.
+const vetoScroll = (e: TouchEvent): void => {
+  if (drag.current !== null) e.preventDefault();
+};
+document.addEventListener("touchmove", vetoScroll, { passive: false });
 
 /** Updates zone, index and nav under the pointer. */
 function hitTest(d: Lifted): void {
@@ -240,6 +237,10 @@ export function draggable(opts: DraggableOptions): Attachment<HTMLElement> {
 
     el.addEventListener("pointerdown", onDown);
     el.addEventListener("contextmenu", onContext);
+    // touchmoves keep targeting the touched scrap after hover-paging detaches
+    // it, and a detached node's events never reach document. Kept on teardown
+    // for that reason; re-adding the same function does not duplicate it.
+    el.addEventListener("touchmove", vetoScroll, { passive: false });
     // no end() here: hover-paging unmounts the day a scrap was lifted from,
     // and the window listeners must still carry that drag to its drop
     return () => {
