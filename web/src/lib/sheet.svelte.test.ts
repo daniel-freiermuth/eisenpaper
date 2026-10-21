@@ -678,6 +678,46 @@ describe("SheetStore.commit", () => {
     expect(cached()).toMatchObject({ tasks: [{ id: "t1", done: true }] });
   });
 
+  it("saves the newest edit when an earlier save lands first but is answered last", async () => {
+    const tasks = fakeServer(serverText);
+    const store = await loadStore();
+    fetchMock.mockImplementation(tasks.handle);
+    await store.sync();
+    // tasks.json takes each request at once, but its answers are held
+    const held: { put: boolean; answer: () => void }[] = [];
+    fetchMock.mockImplementation(
+      (url, init) =>
+        new Promise<Response>((resolve) => {
+          const answer = tasks.handle(url, init);
+          held.push({
+            put: init?.method === "PUT",
+            answer: () => {
+              resolve(answer);
+            },
+          });
+        }),
+    );
+
+    const task = firstTask(store);
+    store.toggleDone(task);
+    await vi.advanceTimersByTimeAsync(300); // its save is still in flight...
+    store.finishEdit(task, "file tax return today");
+    await vi.advanceTimersByTimeAsync(300); // ...when this one's is due
+    // answers to saves come back newest first, ahead of any GET's
+    for (;;) {
+      const next = held.findLast((h) => h.put) ?? held[0];
+      if (next === undefined) break;
+      held.splice(held.indexOf(next), 1);
+      next.answer();
+      await vi.advanceTimersByTimeAsync(0);
+    }
+
+    expect(store.status).toBe("synced");
+    expect(tasks.sheet()).toMatchObject({
+      tasks: [{ id: "t1", done: true, text: "file tax return today" }],
+    });
+  });
+
   /** Like `server(204)`, but rejects a keepalive PUT over the browsers'
    * 64 KiB keepalive body quota, which counts UTF-8 bytes. */
   const keepaliveQuota: Fetch = (url, init) =>
