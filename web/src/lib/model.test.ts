@@ -248,6 +248,24 @@ describe("mergeSheets", () => {
     ]);
   });
 
+  it("folds a project added under a name the other side already uses, ignoring case", () => {
+    const mine = { ...a, project: "m" };
+    const archived = { ...b, done: true, project: "m" };
+    const merged = mergeSheets(
+      sheet([]),
+      {
+        ...sheet([mine], [{ at: 1, tasks: [archived] }]),
+        projects: [{ id: "m", name: "Garden", color: "#2f5d9e" }],
+      },
+      { ...sheet([]), projects: [{ id: "g", name: "garden" }] },
+    );
+    expect(merged.projects).toEqual([{ id: "g", name: "garden" }]);
+    expect(merged.tasks).toEqual([{ ...a, project: "g" }]);
+    expect(merged.archive).toEqual([
+      { at: 1, tasks: [{ ...archived, project: "g" }] },
+    ]);
+  });
+
   it("merges fields it does not know, so newer clients' data survives", () => {
     const merged = mergeSheets(
       { ...base, theme: "dark" },

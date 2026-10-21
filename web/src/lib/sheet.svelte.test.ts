@@ -1300,6 +1300,36 @@ describe("SheetStore projects", () => {
     ]);
   });
 
+  it("folds a never-synced project into the server's one of the same name", async () => {
+    const store = await loadStore(); // empty cache: a new device
+    fetchMock.mockRejectedValue(new TypeError("network down"));
+    await store.sync();
+    const garden = store.addProject("Garden");
+    if (garden === null) throw new Error("garden refused");
+    store.addDraft(0.5, 0.5);
+    const draft = store.draft;
+    if (draft === null) throw new Error("no draft");
+    store.finishEdit(draft, "weed");
+    const weed = store.sheet.tasks.find((t) => t.text === "weed");
+    if (weed === undefined) throw new Error("weed not filed");
+    store.setProject(weed, garden);
+
+    const remote: Sheet = {
+      ...serverSheet,
+      projects: [{ id: "p1", name: "garden" }],
+    };
+    fetchMock.mockReset();
+    fetchMock.mockImplementation(
+      serve(() => reply(200, JSON.stringify(remote))),
+    );
+    await store.sync();
+
+    expect(store.sheet.projects).toEqual([{ id: "p1", name: "garden" }]);
+    expect(store.sheet.tasks.find((t) => t.text === "weed")?.project).toBe(
+      "p1",
+    );
+  });
+
   it("refuses blank names and names taken in any letter case", async () => {
     const store = await loadStore();
     expect(store.addProject("Garden")).not.toBeNull();
