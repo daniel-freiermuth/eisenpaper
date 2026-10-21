@@ -123,6 +123,7 @@
       (e.currentTarget as HTMLElement).blur();
     } else if (e.key === "Escape") {
       e.preventDefault();
+      e.stopPropagation(); // the blur ends the edit; the detail pane would close
       cancelled = true;
       (e.currentTarget as HTMLElement).blur();
     }
