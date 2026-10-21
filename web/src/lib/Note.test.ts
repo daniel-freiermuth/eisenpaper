@@ -261,9 +261,9 @@ describe("Note drag versus click", () => {
     pointer("pointermove", 103, 104); // 5px
     pointer("pointerup", 103, 104);
 
-    expect(store.selectedId).toBe("t1");
-    vi.runAllTimers();
+    vi.advanceTimersByTime(260); // the double-click window
     flushSync();
+    expect(store.selectedId).toBe("t1");
     // selecting is view state: nothing moved, nothing crossed out or saved
     expect(task()).toMatchObject({ x: 0.5, y: 0.5, done: false });
     expect(commit).not.toHaveBeenCalled();
