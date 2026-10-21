@@ -341,6 +341,28 @@ describe("draggable with touch", () => {
     expect(onTap).not.toHaveBeenCalled();
   });
 
+  it("lifts only the first of two scraps long-pressed at once", () => {
+    const mine = attach(me, "me");
+    const theirs = attach(other, "b");
+    const finger1: PointerEventInit = { ...touch, pointerId: 1 };
+    const finger2: PointerEventInit = { ...touch, pointerId: 2 };
+
+    fire(me, "pointerdown", 110, 120, finger1);
+    fire(other, "pointerdown", 110, 220, finger2);
+    vi.advanceTimersByTime(300); // both fingers held past the long press
+    expect(drag.current).toMatchObject({ id: "me", x: 110, y: 120 });
+
+    under = zone;
+    fire(document.body, "pointermove", 110, 330, finger1);
+    expect(drag.current).toMatchObject({ id: "me", x: 110, y: 330 });
+    fire(document.body, "pointerup", 110, 330, finger1);
+    fire(document.body, "pointerup", 110, 220, finger2);
+
+    expect(mine.onDrop).toHaveBeenCalledExactlyOnceWith(ZONE, 3);
+    expect(theirs.onTap).not.toHaveBeenCalled();
+    expect(theirs.onDrop).not.toHaveBeenCalled();
+  });
+
   it("vetoes page scrolling only while a scrap is lifted", () => {
     attach(me, "me");
     const scroll = (): boolean => {
