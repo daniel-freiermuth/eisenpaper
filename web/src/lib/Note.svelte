@@ -155,6 +155,7 @@
   class:editing
   class:selected={store.selectedId === task.id}
   class:tinted={tintVars !== undefined}
+  class:check-left={task.x > 0.5}
   style={tintVars}
   style:left="{task.x * 100}%"
   style:top="{task.y * 100}%"
@@ -302,7 +303,10 @@
     opacity: 1;
   }
 
-  /* hangs off the right edge; as a child it keeps the note hovered */
+  /* hangs off the edge facing the middle of the pane (right in the left
+     half, left in the right half), so a note near either edge cannot push
+     it off-screen or under the detail pane; as a child it keeps the note
+     hovered */
   .check {
     position: absolute;
     top: 50%;
@@ -310,6 +314,11 @@
     transform: translateY(-50%);
     /* linger after the pointer leaves, so a sloppy path still reaches it */
     transition: visibility 0s linear 0.35s;
+  }
+
+  .check-left .check {
+    left: auto;
+    right: 100%;
   }
 
   /* invisible bridge from the note to ✓ over the full note height; painted
@@ -321,6 +330,11 @@
     bottom: -6px;
     left: 100%;
     width: 32px;
+  }
+
+  .check-left:is(:hover, .selected)::before {
+    left: auto;
+    right: 100%;
   }
 
   .note:is(:hover, :focus-within, .selected) .check {
