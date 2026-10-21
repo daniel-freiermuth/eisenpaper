@@ -24,7 +24,8 @@
 
   /** a day, or null for the backlog; scheduled days go to the end of their list */
   function scheduleOn(day: string | null): void {
-    if (task === undefined) return;
+    // already there: keep the order set by dragging in the Scheduling pane
+    if (task === undefined || (task.day ?? null) === day) return;
     store.schedule(task.id, day, Infinity);
   }
 
