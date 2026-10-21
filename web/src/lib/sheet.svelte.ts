@@ -90,8 +90,8 @@ class SheetStore {
   /** ETag of #lastServerText; null = none known, so only create (If-None-Match) */
   #etag: string | null = null;
   #writeTimer: number | undefined;
-  /** UTF-8 body bytes of our keepalive PUTs still in flight */
-  #keepaliveBytes = 0;
+  /** settles once our PUT in flight is answered; null = none in flight */
+  #putting: Promise<void> | null = null;
 
   #serialize(): string {
     return JSON.stringify($state.snapshot(this.sheet), null, 2);
@@ -119,15 +119,19 @@ class SheetStore {
 
   /** Saves the sheet over the tasks.json version it was merged with. */
   async #write(retries: number): Promise<void> {
+    // one PUT at a time: a second one would name the same version as the
+    // first and get a 412 once that lands, so wait for its ETag instead
+    while (this.#putting !== null) await this.#putting;
     const text = this.#serialize();
     if (text === this.#lastServerText) {
       this.status = "synced";
       return;
     }
     this.status = "saving";
-    const bytes = new TextEncoder().encode(text).length;
-    const keepalive = this.#keepaliveBytes + bytes < KEEPALIVE_LIMIT;
-    if (keepalive) this.#keepaliveBytes += bytes;
+    // the only keepalive request of ours in flight, so it has the quota alone
+    const keepalive = new TextEncoder().encode(text).length < KEEPALIVE_LIMIT;
+    const answer = Promise.withResolvers<undefined>();
+    this.#putting = answer.promise;
     let res: Response;
     try {
       res = await fetch(ENDPOINT, {
@@ -146,7 +150,10 @@ class SheetStore {
       this.status = "offline";
       return;
     } finally {
-      if (keepalive) this.#keepaliveBytes -= bytes;
+      // waiting writes resume only after the answer is handled below: that
+      // runs without an await up to the GET of a 412's merge
+      this.#putting = null;
+      answer.resolve(undefined);
     }
     if (res.status === 412) {
       // another device saved first: merge with its sheet, then save again

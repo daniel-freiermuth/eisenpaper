@@ -962,7 +962,7 @@ describe("SheetStore.start", () => {
     expect(putBodies()).toMatchObject([{ tasks: [{ id: "t1", done: true }] }]);
   });
 
-  it("keeps overlapping keepalive PUTs within the shared 64 KiB quota", async () => {
+  it("flushes on hide an edit made while a save is in flight, as keepalive once that is answered", async () => {
     const { store } = await startedStore();
     // browsers sum the bodies of every keepalive request still in flight
     let inFlight = 0;
@@ -989,14 +989,20 @@ describe("SheetStore.start", () => {
     await vi.advanceTimersByTimeAsync(300);
     expect(puts()).toHaveLength(1);
 
-    // a newer edit, then the tab is hidden before its delay runs out
+    // a newer edit, then the tab is hidden before its delay runs out; it
+    // waits for the ETag of the save in flight instead of racing it
     store.toggleDone(firstTask(store));
     setVisibility("hidden");
-    expect(puts()).toHaveLength(2);
     await vi.advanceTimersByTimeAsync(0);
+    expect(puts()).toHaveLength(1);
     expect(store.status).toBe("saving");
 
-    for (const release of held) release();
+    held.shift()?.();
+    await vi.waitFor(() => {
+      expect(puts()).toHaveLength(2);
+    });
+    expect(puts()[1]?.[1]?.keepalive).toBe(true);
+    held.shift()?.();
     await vi.waitFor(() => {
       expect(store.status).toBe("synced");
     });
