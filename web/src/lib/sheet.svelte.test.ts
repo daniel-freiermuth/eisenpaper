@@ -383,6 +383,81 @@ describe("SheetStore.sync", () => {
     expect(store.status).toBe("synced");
   });
 
+  /** The desktop has synced; then the phone adds a task, unseen here. */
+  async function conflictedStore() {
+    const tasks = fakeServer(serverText);
+    const store = await loadStore();
+    fetchMock.mockImplementation(tasks.handle);
+    await store.sync();
+    const phoneTask = { ...serverTask, id: "phone", text: "buy milk" };
+    tasks.save({ tasks: [serverTask, phoneTask], archive: [] });
+    return { store, tasks };
+  }
+
+  it.each([
+    [
+      "cancelled",
+      (s: Store): void => {
+        s.cancelEdit();
+      },
+    ],
+    [
+      "finished empty",
+      (s: Store): void => {
+        const draft = s.draft;
+        if (draft === null) throw new Error("no draft");
+        s.finishEdit(draft, "");
+      },
+    ],
+  ])(
+    "saves an edit that met another device's save once a note typed meanwhile is %s",
+    async (_, end) => {
+      const { store, tasks } = await conflictedStore();
+      store.toggleDone(firstTask(store));
+      store.addDraft(0.2, 0.2); // the save goes out, and gets 412, mid-draft
+      await vi.advanceTimersByTimeAsync(300);
+      expect(store.status).toBe("saving");
+
+      end(store);
+      await vi.advanceTimersByTimeAsync(300);
+
+      expect(tasks.sheet()).toMatchObject({
+        tasks: [{ id: "t1", done: true }, { id: "phone" }],
+      });
+      expect(store.status).toBe("synced");
+    },
+  );
+
+  it("saves an edit that met another device's save once an edit begun during its merge ends", async () => {
+    const { store, tasks } = await conflictedStore();
+    let releaseGet = (): void => undefined;
+    fetchMock.mockImplementation((url, init) =>
+      init?.method === "PUT"
+        ? tasks.handle(url, init)
+        : new Promise<Response>((resolve) => {
+            releaseGet = () => {
+              resolve(tasks.handle(url, init));
+            };
+          }),
+    );
+    const task = firstTask(store);
+    store.toggleDone(task);
+    await vi.advanceTimersByTimeAsync(300); // 412: the merge's GET is in flight
+    store.startEdit(task);
+    releaseGet();
+    await vi.advanceTimersByTimeAsync(300);
+    expect(store.status).toBe("saving");
+
+    fetchMock.mockImplementation(tasks.handle);
+    store.cancelEdit();
+    await vi.advanceTimersByTimeAsync(300);
+
+    expect(tasks.sheet()).toMatchObject({
+      tasks: [{ id: "t1", done: true }, { id: "phone" }],
+    });
+    expect(store.status).toBe("synced");
+  });
+
   it("keeps offline edits across a reload when another device saved since", async () => {
     const tasks = fakeServer(serverText);
     let store = await loadStore(); // the phone
