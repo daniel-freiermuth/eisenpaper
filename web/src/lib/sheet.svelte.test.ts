@@ -738,6 +738,35 @@ describe("SheetStore.commit", () => {
     expect(store.status).toBe("synced");
   });
 
+  it("saves again when the sheet changed back while a PUT was in flight", async () => {
+    const tasks = fakeServer(serverText);
+    const store = await loadStore();
+    fetchMock.mockImplementation(tasks.handle);
+    await store.sync();
+    // hold the next PUT on a slow link until released
+    let release = (): void => undefined;
+    fetchMock.mockImplementationOnce(
+      (url, init) =>
+        new Promise<Response>((resolve) => {
+          release = () => void tasks.handle(url, init).then(resolve);
+        }),
+    );
+    const task = firstTask(store);
+
+    store.toggleDone(task);
+    await vi.advanceTimersByTimeAsync(300);
+    expect(store.status).toBe("saving");
+    // undone before the save lands: the sheet is the old server text again,
+    // so its own write sends nothing
+    store.toggleDone(task);
+    await vi.advanceTimersByTimeAsync(300);
+    release();
+    await vi.advanceTimersByTimeAsync(1000);
+
+    expect(tasks.sheet()).toEqual(serverSheet);
+    expect(store.status).toBe("synced");
+  });
+
   it("caches the sheet at once, even when the PUT fails", async () => {
     const store = await syncedStore();
     fetchMock.mockImplementation(server(500));
