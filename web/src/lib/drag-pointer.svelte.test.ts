@@ -476,6 +476,45 @@ describe("draggable lifecycle", () => {
     },
   );
 
+  it.each([
+    [
+      "released while the other is up",
+      () => {
+        expect(drag.current).toMatchObject({ id: "me" });
+      },
+    ],
+    [
+      "outliving the other's drop",
+      () => {
+        fire(document.body, "pointerup", 110, 120, touch); // the first drops
+        vi.advanceTimersByTime(180); // the second's long press comes due
+        expect(drag.current).toBeNull();
+      },
+    ],
+  ])(
+    "drops a pending press whose scrap leaves the page while another scrap is lifted, %s",
+    (_, then) => {
+      attach(me, "me");
+      const theirs = attach(other, "b");
+      fire(me, "pointerdown", 110, 120, touch);
+      vi.advanceTimersByTime(180);
+      // a second finger presses before the first's long press lifts
+      fire(other, "pointerdown", 110, 220, { ...touch, pointerId: 2 });
+      vi.advanceTimersByTime(100);
+      expect(drag.current).toMatchObject({ id: "me" });
+
+      // a sync deletes the second scrap while its press is still pending
+      other.remove();
+      detach.pop()?.();
+      then();
+
+      under = zone;
+      fire(document.body, "pointerup", 110, 319, { ...touch, pointerId: 2 });
+      expect(theirs.onTap).not.toHaveBeenCalled();
+      expect(theirs.onDrop).not.toHaveBeenCalled();
+    },
+  );
+
   it("keeps a pending press when its attachment re-runs on the same scrap", () => {
     const { onDrop } = attach(me, "me");
     fire(me, "pointerdown", 110, 120, touch);
