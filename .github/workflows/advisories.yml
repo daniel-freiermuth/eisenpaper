@@ -1,0 +1,37 @@
+# RustSec advisories are checked apart from CI: the advisory DB changes
+# independently of this repo, so a new advisory must not turn unrelated PRs
+# or merges red. Runs daily, and whenever the dependency set or policy changes.
+name: Advisories
+
+on:
+  schedule:
+    - cron: "17 6 * * *"
+  push:
+    branches: [main]
+    paths: [Cargo.lock, Cargo.toml, deny.toml, .github/workflows/advisories.yml]
+  pull_request:
+    paths: [Cargo.lock, Cargo.toml, deny.toml, .github/workflows/advisories.yml]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  advisories:
+    name: cargo-deny advisories
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: taiki-e/install-action@a4d3f3f761dcd95cce1b72cb61cb6d1963438177 # v2.87.30
+        with:
+          tool: just,cargo-deny
+      - run: just check-advisories
