@@ -8,6 +8,10 @@
 
   function ondblclick(e: MouseEvent & { currentTarget: HTMLElement }): void {
     if (e.target !== e.currentTarget) return; // a note handles its own dblclick
+    // the first press of this double-click may have closed the detail pane,
+    // so the pane is still widening: place the draft against the width it
+    // settles at, where notes are laid out, not the width mid-transition
+    for (const a of e.currentTarget.getAnimations()) a.finish();
     const pane = e.currentTarget.getBoundingClientRect();
     store.addDraft(
       (e.clientX - pane.left) / pane.width,
