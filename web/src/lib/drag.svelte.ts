@@ -213,6 +213,9 @@ export function draggable(opts: DraggableOptions): Attachment<HTMLElement> {
     const onDown = (e: PointerEvent): void => {
       if (e.button !== 0 || drag.current !== null) return;
       const touch = e.pointerType === "touch";
+      // a second finger on this still-pending scrap takes over its press;
+      // the first press's timer would otherwise lift at the second's point
+      if (press !== null) clearTimeout(press.timer);
       press = {
         pointerId: e.pointerId,
         x: e.clientX,
