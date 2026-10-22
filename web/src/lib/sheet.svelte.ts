@@ -134,11 +134,16 @@ class SheetStore {
    * Caches the sheet together with the server text it descends from. When
    * the sheet can't be cached the base is left alone too: an old sheet with
    * a newer base would read the server's additions since as local deletions.
+   * When the base can't be cached the sheet is dropped with it: a new sheet
+   * with an older base would read every change synced since as local edits.
    */
   #persist(): void {
     if (!cacheSet(CACHE_KEY, this.#serialize())) return;
     if (this.#lastServerText === null) cacheRemove(BASE_KEY);
-    else cacheSet(BASE_KEY, this.#lastServerText);
+    else if (!cacheSet(BASE_KEY, this.#lastServerText)) {
+      cacheRemove(CACHE_KEY);
+      cacheRemove(BASE_KEY);
+    }
   }
 
   commit(): void {
