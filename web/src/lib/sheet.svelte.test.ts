@@ -768,6 +768,41 @@ describe("SheetStore without a usable localStorage", () => {
     });
     expect(reloaded.sheet.tasks.map((t) => t.id)).toEqual(["t1", "t3"]);
   });
+
+  it("keeps another device's deletion when only the sheet could be cached", async () => {
+    let baseFull = false;
+    vi.stubGlobal("localStorage", {
+      getItem: (k: string) => storage.get(k) ?? null,
+      setItem: (k: string, v: string) => {
+        if (baseFull && k === BASE_KEY) quotaExceeded();
+        storage.set(k, v);
+      },
+      removeItem: (k: string) => storage.delete(k),
+    });
+    const tasks = fakeServer(serverText);
+    fetchMock.mockImplementation(tasks.handle);
+    const store = await loadStore();
+    await store.sync();
+
+    // this tab adds a note and saves it, but only the sheet can be cached,
+    // not the tasks.json it now descends from
+    baseFull = true;
+    store.addDraft(0.2, 0.2);
+    const draft = store.draft;
+    if (draft === null) throw new Error("no draft");
+    store.finishEdit(draft, "buy milk");
+    await vi.advanceTimersByTimeAsync(300);
+    expect(store.status).toBe("synced");
+
+    // another device deletes the note
+    tasks.save({ tasks: [serverTask], archive: [] });
+    baseFull = false;
+    const reloaded = await loadStore();
+    await reloaded.sync();
+
+    expect(tasks.sheet()).toEqual({ tasks: [serverTask], archive: [] });
+    expect(reloaded.sheet.tasks.map((t) => t.id)).toEqual(["t1"]);
+  });
 });
 
 /** A store that has adopted `serverSheet`, with the fetch log cleared. */
