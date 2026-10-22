@@ -525,6 +525,52 @@ describe("SheetStore.sync", () => {
     expect(store.status).toBe("synced");
   });
 
+  it("keeps edits the app before the base was kept failed to save", async () => {
+    // synced at 100, then t1 crossed out offline: stamped 200, never saved
+    const offline = {
+      tasks: [{ ...serverTask, done: true }],
+      archive: [],
+      savedAt: 200,
+    };
+    storage.set(CACHE_KEY, JSON.stringify(offline, null, 2));
+    const desktopTask = { ...serverTask, id: "desk", text: "renew passport" };
+    const tasks = fakeServer(
+      JSON.stringify(
+        { tasks: [serverTask, desktopTask], archive: [], savedAt: 100 },
+        null,
+        2,
+      ),
+    );
+    const store = await loadStore();
+    fetchMock.mockImplementation(tasks.handle);
+    await store.sync();
+
+    expect(tasks.sheet()).toMatchObject({
+      tasks: [{ id: "t1", done: true }, { id: "desk" }],
+    });
+    expect(store.status).toBe("synced");
+  });
+
+  it("merges a cache that never synced before the base was kept", async () => {
+    // the app before BASE_KEY flagged it, and stamped its offline edits
+    storage.set(
+      CACHE_KEY,
+      JSON.stringify({ ...JSON.parse(localText), savedAt: 100 }, null, 2),
+    );
+    storage.set("eisenpaper.v1.unsynced", "1");
+    const tasks = fakeServer(
+      JSON.stringify({ ...serverSheet, savedAt: 200 }, null, 2),
+    );
+    const store = await loadStore();
+    fetchMock.mockImplementation(tasks.handle);
+    await store.sync();
+
+    expect(tasks.sheet()).toMatchObject({
+      tasks: [{ id: "t1" }, { id: "t2" }],
+    });
+    expect(store.status).toBe("synced");
+  });
+
   it("gives up with an error when tasks.json changes on every save", async () => {
     const store = await loadStore();
     let n = 0;

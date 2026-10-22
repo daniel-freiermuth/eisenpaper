@@ -21,6 +21,11 @@ const CACHE_KEY = "eisenpaper.v1";
  * pair stays consistent when several tabs share them.
  */
 const BASE_KEY = "eisenpaper.v1.base";
+/**
+ * Set by the app before BASE_KEY existed while its cache had never synced.
+ * That app also stamped the sheet's savedAt on every edit.
+ */
+const UNSYNCED_KEY = "eisenpaper.v1.unsynced";
 const ENDPOINT = "tasks.json";
 const WRITE_DELAY_MS = 300;
 /** browsers cap the bodies of all keepalive requests in flight at 64 KiB
@@ -64,6 +69,27 @@ function loadCache(): Sheet {
   return (raw === null ? null : parseSheet(raw)) ?? emptySheet();
 }
 
+/** The sheet's savedAt as the app before BASE_KEY stamped it; 0 = none. */
+function savedAt(sheet: Sheet): number {
+  const at = sheet["savedAt"];
+  return typeof at === "number" ? at : 0;
+}
+
+/**
+ * The cache if the app wrote it before BASE_KEY existed and it had synced
+ * since, else null. That app saved each edit at once and cached the sheets
+ * it adopted, so the cache is the tasks.json it last synced with, short of
+ * edits whose save failed: those stamped it newer than that tasks.json.
+ */
+function legacyCache(): string | null {
+  if (cacheGet(BASE_KEY) !== null || cacheGet(UNSYNCED_KEY) !== null) {
+    return null;
+  }
+  const raw = cacheGet(CACHE_KEY);
+  const cached = raw === null ? null : parseSheet(raw);
+  return cached !== null && savedAt(cached) > 0 ? raw : null;
+}
+
 /**
  * The sheet plus its sync to the server. The server's tasks.json is the
  * source of truth; localStorage is an offline cache. Every persistent
@@ -85,8 +111,13 @@ class SheetStore {
   /** the selected task, gone once it leaves the sheet */
   selected = $derived(this.sheet.tasks.find((t) => t.id === this.selectedId));
 
-  /** tasks.json as last seen on the server; null = never seen, or none there */
-  #lastServerText: string | null = cacheGet(BASE_KEY);
+  /** the cache, if the app wrote it before BASE_KEY existed: see legacyCache */
+  readonly #legacyCache = legacyCache();
+  /**
+   * tasks.json as last seen on the server, or a cache from before BASE_KEY
+   * standing in for it; null = never seen, or none there
+   */
+  #lastServerText: string | null = cacheGet(BASE_KEY) ?? this.#legacyCache;
   /** ETag of #lastServerText; null = none known, so only create (If-None-Match) */
   #etag: string | null = null;
   #writeTimer: number | undefined;
@@ -251,11 +282,18 @@ class SheetStore {
       this.#pullHeld = true;
       return;
     }
-    const merged = mergeSheets(
-      (base === null ? null : parseSheet(base)) ?? emptySheet(),
-      $state.snapshot(this.sheet),
-      remote,
-    );
+    let baseSheet = (base === null ? null : parseSheet(base)) ?? emptySheet();
+    // a cache from before BASE_KEY stamped newer than tasks.json holds edits
+    // whose save failed, on a base nobody kept: merge it as never synced, so
+    // they survive, as they did when that app pushed it over tasks.json
+    if (
+      base !== null &&
+      base === this.#legacyCache &&
+      savedAt(baseSheet) > savedAt(remote)
+    ) {
+      baseSheet = emptySheet();
+    }
+    const merged = mergeSheets(baseSheet, $state.snapshot(this.sheet), remote);
     this.#etag = res.headers.get("etag");
     this.#lastServerText = text;
     if (sameJson(merged, remote)) {
