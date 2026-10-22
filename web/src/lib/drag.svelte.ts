@@ -246,7 +246,7 @@ export function draggable(opts: DraggableOptions): Attachment<HTMLElement> {
     // its drop. A press that has not lifted dies with its scrap; one whose
     // attachment merely re-runs on the same scrap (a synced edit) carries on.
     return () => {
-      if (press !== null && drag.current === null && !el.isConnected) end();
+      if (press !== null && !lifted && !el.isConnected) end();
       el.removeEventListener("pointerdown", onDown);
       el.removeEventListener("contextmenu", onContext);
     };
