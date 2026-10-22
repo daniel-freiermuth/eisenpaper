@@ -138,6 +138,11 @@ export const SheetSchema = v.looseObject({
       uniqueBy((p: Project) => p.id),
     ),
   ),
+  /**
+   * Stamped by the app before the three-way merge; still read to recognise
+   * its cache. The server refuses one that is not a number, so must we.
+   */
+  savedAt: v.optional(FiniteSchema),
 });
 export type Sheet = v.InferOutput<typeof SheetSchema>;
 

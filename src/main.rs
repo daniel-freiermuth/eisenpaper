@@ -935,6 +935,7 @@ mod tests {
             r#"{"tasks":[],"archive":null}"#,
             r#"{"tasks":[],"archive":[],"savedAt":"yesterday"}"#,
             r#"{"tasks":[],"archive":[],"savedAt":null}"#,
+            r#"{"tasks":[],"archive":[],"savedAt":1e999}"#,
         ] {
             assert!(
                 matches!(
