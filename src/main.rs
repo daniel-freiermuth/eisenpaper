@@ -9,8 +9,10 @@
 use std::fs;
 use std::io::{self, Write as _};
 use std::path::{Path, PathBuf};
+use std::pin::Pin;
 use std::process::ExitCode;
 use std::sync::Arc;
+use std::task::{Context, Poll};
 use std::time::Duration;
 
 use axum::body::Bytes;
@@ -26,8 +28,10 @@ use hyper_util::rt::{TokioIo, TokioTimer};
 use hyper_util::service::TowerToHyperService;
 use serde::Deserialize;
 use serde::de::IgnoredAny;
+use tokio::io::{AsyncRead, AsyncWrite, ReadBuf};
 use tokio::net::TcpListener;
 use tokio::sync::Semaphore;
+use tokio::time::Sleep;
 
 /// Marker header: tells the app this origin accepts `PUT /tasks.json`.
 const MARKER: (HeaderName, HeaderValue) = (
@@ -48,6 +52,10 @@ const BODY_TIMEOUT: Duration = Duration::from_secs(30);
 /// response. Idle keep-alive and stalled-header connections are closed after
 /// this, so they cannot pile up and pin sockets and header buffers.
 const HEADER_TIMEOUT: Duration = Duration::from_secs(30);
+/// How long a response write may wait for the client to read before the
+/// connection is closed, so clients that stop reading cannot pile up and pin
+/// sockets and buffered responses either.
+const WRITE_TIMEOUT: Duration = Duration::from_secs(30);
 
 /// Help text for `--help` and argument errors.
 const USAGE: &str = "\
@@ -438,18 +446,113 @@ fn app(cfg: Arc<Config>) -> Router {
         .with_state(cfg)
 }
 
+/// A connection whose writes fail once one has been pending for
+/// [`WRITE_TIMEOUT`], which ends the connection.
+///
+/// hyper only times out reading a request head: without this, a client that
+/// stops reading a response larger than the socket buffers keeps its
+/// connection, and the whole buffered response, forever.
+struct WriteTimeout<I> {
+    /// The connection.
+    io: I,
+    /// Fires [`WRITE_TIMEOUT`] after the pending write began to wait.
+    deadline: Pin<Box<Sleep>>,
+    /// Whether a write is pending, so `deadline` is armed.
+    pending: bool,
+}
+
+impl<I> WriteTimeout<I> {
+    /// Wraps `io`; must be called inside the runtime.
+    fn new(io: I) -> Self {
+        Self {
+            io,
+            deadline: Box::pin(tokio::time::sleep(WRITE_TIMEOUT)),
+            pending: false,
+        }
+    }
+
+    /// Passes on a write's result, but fails one still pending at the deadline.
+    fn check<T>(&mut self, cx: &mut Context<'_>, poll: Poll<io::Result<T>>) -> Poll<io::Result<T>> {
+        if poll.is_ready() {
+            self.pending = false;
+            return poll;
+        }
+        if !self.pending {
+            self.pending = true;
+            let deadline = tokio::time::Instant::now() + WRITE_TIMEOUT;
+            self.deadline.as_mut().reset(deadline);
+        }
+        self.deadline
+            .as_mut()
+            .poll(cx)
+            .map(|()| Err(io::ErrorKind::TimedOut.into()))
+    }
+}
+
+impl<I: AsyncRead + Unpin> AsyncRead for WriteTimeout<I> {
+    fn poll_read(
+        self: Pin<&mut Self>,
+        cx: &mut Context<'_>,
+        buf: &mut ReadBuf<'_>,
+    ) -> Poll<io::Result<()>> {
+        Pin::new(&mut self.get_mut().io).poll_read(cx, buf)
+    }
+}
+
+impl<I: AsyncWrite + Unpin> AsyncWrite for WriteTimeout<I> {
+    fn poll_write(
+        self: Pin<&mut Self>,
+        cx: &mut Context<'_>,
+        buf: &[u8],
+    ) -> Poll<io::Result<usize>> {
+        let this = self.get_mut();
+        let poll = Pin::new(&mut this.io).poll_write(cx, buf);
+        this.check(cx, poll)
+    }
+
+    fn poll_write_vectored(
+        self: Pin<&mut Self>,
+        cx: &mut Context<'_>,
+        bufs: &[io::IoSlice<'_>],
+    ) -> Poll<io::Result<usize>> {
+        let this = self.get_mut();
+        let poll = Pin::new(&mut this.io).poll_write_vectored(cx, bufs);
+        this.check(cx, poll)
+    }
+
+    fn is_write_vectored(&self) -> bool {
+        self.io.is_write_vectored()
+    }
+
+    fn poll_flush(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<io::Result<()>> {
+        let this = self.get_mut();
+        let poll = Pin::new(&mut this.io).poll_flush(cx);
+        this.check(cx, poll)
+    }
+
+    fn poll_shutdown(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<io::Result<()>> {
+        let this = self.get_mut();
+        let poll = Pin::new(&mut this.io).poll_shutdown(cx);
+        this.check(cx, poll)
+    }
+}
+
 /// Serves `app` over HTTP/1.1 on every connection `listener` accepts.
 ///
 /// Unlike `axum::serve`, hyper gets a timer here, which is what makes it
-/// enforce [`HEADER_TIMEOUT`]. Accept errors are retried by the
-/// [`Listener`] impl (with a backoff for `TcpListener`).
+/// enforce [`HEADER_TIMEOUT`], and every connection gets a [`WriteTimeout`].
+/// Accept errors are retried by the [`Listener`] impl (with a backoff for
+/// `TcpListener`).
 async fn serve(mut listener: impl Listener, app: Router) -> ! {
     loop {
         let (io, _addr) = listener.accept().await;
         let conn = http1::Builder::new()
             .timer(TokioTimer::new())
             .header_read_timeout(HEADER_TIMEOUT)
-            .serve_connection(TokioIo::new(io), TowerToHyperService::new(app.clone()));
+            .serve_connection(
+                TokioIo::new(WriteTimeout::new(io)),
+                TowerToHyperService::new(app.clone()),
+            );
         // a failed or timed-out connection only concerns its own client
         drop(tokio::spawn(async move { drop(conn.await) }));
     }
