@@ -96,6 +96,21 @@ describe("parseSheet", () => {
     expect(parseSheet(text)).toBeNull();
   });
 
+  // The server (SheetShape in src/main.rs) refuses these with 400, so a
+  // sheet the app adopted with one could never be saved again.
+  it.each([
+    ["null", `{"tasks":[],"archive":[],"savedAt":null}`],
+    ["a string", `{"tasks":[],"archive":[],"savedAt":"yesterday"}`],
+    ["non-finite", `{"tasks":[],"archive":[],"savedAt":1e999}`],
+  ])("rejects a savedAt that is %s", (_name, text) => {
+    expect(parseSheet(text)).toBeNull();
+  });
+
+  it("keeps a numeric savedAt from sheets written before the merge", () => {
+    const text = `{"tasks":[],"archive":[],"savedAt":1760000000000}`;
+    expect(parseSheet(text)).toHaveProperty("savedAt", 1760000000000);
+  });
+
   // JSON.parse turns an overflowing literal into ±Infinity, which
   // JSON.stringify would write back as null — a sheet no client can load.
   it.each([
