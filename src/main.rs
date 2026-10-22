@@ -716,6 +716,18 @@ mod tests {
         assert!(idle.elapsed() >= HEADER_TIMEOUT);
     }
 
+    #[tokio::test(start_paused = true)]
+    async fn connection_that_stops_reading_its_response_is_closed() {
+        let (server, data) = spawn_server("stalled-reader");
+        // far more than the pipe holds, so the response cannot be written out
+        fs::write(&data, vec![b' '; 1024 * 1024]).unwrap();
+        let mut conn = send(&server, b"GET /tasks.json HTTP/1.1\r\nHost: x\r\n\r\n").await;
+        tokio::time::sleep(HEADER_TIMEOUT * 2).await;
+        // reading would unstall the server: the dropped server end shows instead
+        let err = conn.write_all(b"x").await.unwrap_err();
+        assert_eq!(err.kind(), io::ErrorKind::BrokenPipe);
+    }
+
     #[test]
     fn resolve_maps_root_to_index_and_nested_assets_inside_web() {
         let web = Path::new("/srv/web");
