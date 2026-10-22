@@ -502,6 +502,29 @@ describe("SheetStore.sync", () => {
     expect(store.sheet.tasks.map((t) => t.text)).toEqual(["buy milk"]);
   });
 
+  it("takes another device's edits over a cache from before the base was kept", async () => {
+    // the phone last synced under the app before BASE_KEY, which cached
+    // tasks.json as it was then, stamped with its savedAt, and no base
+    const plumber = { ...serverTask, id: "t2", text: "call the plumber" };
+    const synced = { tasks: [serverTask, plumber], archive: [], savedAt: 100 };
+    storage.set(CACHE_KEY, JSON.stringify(synced, null, 2));
+    // since, the desktop renamed t1 and archived t2 once crossed out
+    const desktop: Sheet = {
+      tasks: [{ ...serverTask, text: "file tax return by May" }],
+      archive: [{ at: 200, tasks: [{ ...plumber, done: true }] }],
+      savedAt: 100,
+    };
+    const tasks = fakeServer(JSON.stringify(desktop, null, 2));
+    const store = await loadStore();
+    fetchMock.mockImplementation(tasks.handle);
+    await store.sync();
+
+    expect(tasks.sheet()).toEqual(desktop);
+    expect(JSON.parse(store.exportText())).toEqual(desktop);
+    expect(puts()).toHaveLength(0);
+    expect(store.status).toBe("synced");
+  });
+
   it("gives up with an error when tasks.json changes on every save", async () => {
     const store = await loadStore();
     let n = 0;
