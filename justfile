@@ -39,14 +39,18 @@ deps:
     pnpm -C web install --frozen-lockfile
 
 # every check CI runs
-check: check-rust check-web
+check: check-rust check-advisories check-web
 
-# rustfmt, clippy (pedantic+), tests, cargo-deny
+# rustfmt, clippy (pedantic+), tests, cargo-deny (bans, licenses, sources)
 check-rust:
     cargo fmt --check
     cargo clippy --all-targets --locked -- -D warnings
     cargo test --locked
-    cargo deny check
+    cargo deny check bans licenses sources
+
+# RustSec advisories; the DB changes daily, so CI runs this on its own schedule
+check-advisories:
+    cargo deny check advisories
 
 # prettier, eslint (strict type-checked), svelte-check, vitest, build
 check-web: deps
