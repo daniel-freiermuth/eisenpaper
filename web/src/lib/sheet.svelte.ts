@@ -71,8 +71,7 @@ function loadCache(): Sheet {
 
 /** The sheet's savedAt as the app before BASE_KEY stamped it; 0 = none. */
 function savedAt(sheet: Sheet): number {
-  const at = sheet["savedAt"];
-  return typeof at === "number" ? at : 0;
+  return sheet.savedAt ?? 0;
 }
 
 /**
