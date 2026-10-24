@@ -127,6 +127,8 @@ class SheetStore {
   #selectTimer: number | undefined;
   /** settles once our PUT in flight is answered; null = none in flight */
   #putting: Promise<void> | null = null;
+  /** commits so far: tells a committed change from a drag's live state */
+  #commits = 0;
   /** an edit turned the last pull away; ending the edit runs it */
   #pullHeld = false;
 
@@ -156,6 +158,7 @@ class SheetStore {
   }
 
   commit(): void {
+    this.#commits += 1;
     this.#persist();
     clearTimeout(this.#writeTimer);
     this.#writeTimer = window.setTimeout(() => {
@@ -170,6 +173,7 @@ class SheetStore {
     // first and get a 412 once that lands, so wait for its ETag instead
     while (this.#putting !== null) await this.#putting;
     const text = this.#serialize();
+    const commits = this.#commits;
     if (text === this.#lastServerText) {
       this.status = "synced";
       return;
@@ -220,9 +224,10 @@ class SheetStore {
     this.#etag = res.headers.get("etag");
     this.#lastServerText = text;
     this.#persist();
-    if (this.#serialize() !== text) {
-      // the sheet changed while this PUT was in flight, and the write of
-      // that change may have been skipped as matching the older server text
+    if (this.#commits !== commits && this.#serialize() !== text) {
+      // the sheet was committed anew while this PUT was in flight, and the
+      // write of that change may have been skipped as matching the older
+      // server text; a drag still going on is left to its drop's commit
       await this.#write(retries);
       return;
     }
