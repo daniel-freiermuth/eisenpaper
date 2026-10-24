@@ -351,4 +351,24 @@ describe("Note drag versus click", () => {
     expect(task()).toMatchObject({ done: false }); // a drag is not a click
     expect(store.selectedId).toBeNull();
   });
+
+  it("puts the note back and stops dragging when the browser cancels the pointer", () => {
+    pointer("pointerdown", 100, 100);
+    pointer("pointermove", 200, 150);
+    expect(note().classList.contains("dragging")).toBe(true);
+
+    pointer("pointercancel", 200, 150);
+    expect(note().classList.contains("dragging")).toBe(false);
+    expect(task()).toMatchObject({ x: 0.5, y: 0.5 });
+
+    // a hovering mouse or pen sends moves with no press behind them
+    pointer("pointermove", 400, 300);
+    pointer("pointerup", 400, 300);
+    vi.runAllTimers();
+    flushSync();
+
+    expect(task()).toMatchObject({ x: 0.5, y: 0.5 });
+    expect(commit).not.toHaveBeenCalled();
+    expect(store.selectedId).toBeNull();
+  });
 });
