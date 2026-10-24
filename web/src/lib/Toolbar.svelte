@@ -1,5 +1,6 @@
 <script lang="ts">
   import { parseSheet } from "./model";
+  import { dayKey } from "./schedule";
   import { store, type SyncStatus } from "./sheet.svelte";
 
   interface Props {
@@ -51,7 +52,7 @@
     const blob = new Blob([store.exportText()], { type: "application/json" });
     const a = document.createElement("a");
     a.href = URL.createObjectURL(blob);
-    a.download = `eisenpaper-${new Date().toISOString().slice(0, 10)}.json`;
+    a.download = `eisenpaper-${dayKey(new Date())}.json`;
     a.click();
     URL.revokeObjectURL(a.href);
   }
