@@ -22,8 +22,11 @@ const CACHE_KEY = "eisenpaper.v1";
  */
 const BASE_KEY = "eisenpaper.v1.base";
 /**
- * Set by the app before BASE_KEY existed while its cache had never synced.
- * That app also stamped the sheet's savedAt on every edit.
+ * Set while the cached sheet has never synced: by the app before BASE_KEY
+ * existed, which also stamped the sheet's savedAt on every edit, and by this
+ * one whenever it caches a sheet without a base, which may carry such a
+ * savedAt (from an imported backup, say) and so must not pass for that
+ * app's synced cache.
  */
 const UNSYNCED_KEY = "eisenpaper.v1.unsynced";
 const ENDPOINT = "tasks.json";
@@ -140,8 +143,13 @@ class SheetStore {
    */
   #persist(): void {
     if (!cacheSet(CACHE_KEY, this.#serialize())) return;
-    if (this.#lastServerText === null) cacheRemove(BASE_KEY);
-    else if (!cacheSet(BASE_KEY, this.#lastServerText)) {
+    if (this.#lastServerText === null) {
+      cacheRemove(BASE_KEY);
+      // best effort: a stamped sheet without it is taken for its own base
+      // (see legacyCache), losing its tasks the server lacks, as dropping
+      // the sheet would
+      cacheSet(UNSYNCED_KEY, "1");
+    } else if (!cacheSet(BASE_KEY, this.#lastServerText)) {
       cacheRemove(CACHE_KEY);
       cacheRemove(BASE_KEY);
     }
