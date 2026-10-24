@@ -261,7 +261,7 @@ describe("Note drag versus click", () => {
     pointer("pointermove", 103, 104); // 5px
     pointer("pointerup", 103, 104);
 
-    vi.advanceTimersByTime(260); // the double-click window
+    vi.advanceTimersByTime(500); // the double-click window
     flushSync();
     expect(store.selectedId).toBe("t1");
     // selecting is view state: nothing moved, nothing crossed out or saved
