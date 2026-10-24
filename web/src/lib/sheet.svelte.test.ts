@@ -571,6 +571,33 @@ describe("SheetStore.sync", () => {
     expect(store.status).toBe("synced");
   });
 
+  it("keeps a backup imported before the first sync across a reload", async () => {
+    // a new phone, offline: the backup, exported from a sheet the app
+    // before the base was kept stamped, carries that sheet's savedAt
+    let store = await loadStore();
+    fetchMock.mockRejectedValue(new TypeError("network down"));
+    await store.sync();
+    const imported = { ...serverTask, id: "imported", text: "renew passport" };
+    store.replace({ tasks: [imported], archive: [], savedAt: 100 });
+    await vi.advanceTimersByTimeAsync(300);
+    expect(store.status).toBe("offline");
+
+    // the phone reloads the app, back online
+    const tasks = fakeServer(
+      JSON.stringify({ ...serverSheet, savedAt: 100 }, null, 2),
+    );
+    store = await loadStore();
+    fetchMock.mockReset();
+    fetchMock.mockImplementation(tasks.handle);
+    await store.sync();
+
+    expect(tasks.sheet()).toMatchObject({
+      tasks: [{ id: "t1" }, { id: "imported" }],
+    });
+    expect(store.sheet.tasks.map((t) => t.id)).toEqual(["t1", "imported"]);
+    expect(store.status).toBe("synced");
+  });
+
   it("gives up with an error when tasks.json changes on every save", async () => {
     const store = await loadStore();
     let n = 0;
