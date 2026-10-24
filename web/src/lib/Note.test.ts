@@ -269,6 +269,21 @@ describe("Note drag versus click", () => {
     expect(commit).not.toHaveBeenCalled();
   });
 
+  it("lets a press on blank paper within the double-click window keep the note unselected", () => {
+    pointer("pointerdown", 100, 100);
+    pointer("pointerup", 100, 100);
+    const paper = document.querySelector<HTMLElement>("main.pane");
+    if (paper === null) throw new Error("no pane rendered");
+    paper.dispatchEvent(
+      new PointerEvent("pointerdown", { button: 0, bubbles: true }),
+    );
+    vi.advanceTimersByTime(260); // the click's double-click window ends
+    flushSync();
+
+    // the press on paper came last: the click must not select after it
+    expect(store.selectedId).toBeNull();
+  });
+
   it("crosses out with ✓ without selecting or dragging the note", () => {
     const check = note().querySelector<HTMLButtonElement>("button.check");
     if (check === null) throw new Error("no ✓ button");
