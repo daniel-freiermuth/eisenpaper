@@ -23,8 +23,10 @@
   const DRAG_THRESHOLD_PX = 6;
   /** delay so a double-click (edit) can cancel the single-click (select):
       selecting opens the detail pane, which on wide screens narrows this
-      pane and slides the note away from under the second click */
-  const CLICK_DELAY_MS = 260;
+      pane and slides the note away from under the second click. Browsers
+      fire dblclick within the OS double-click time, 400ms by default on
+      GNOME and 500ms on Windows, so wait out the longest default */
+  const CLICK_DELAY_MS = 500;
 
   /** pointer, card position and pane size at press time; the card moves by the pointer's delta */
   let press: {
