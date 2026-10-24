@@ -458,6 +458,19 @@ describe("SheetStore.sync", () => {
     expect(store.status).toBe("synced");
   });
 
+  it("adopts another device's save that a sync met mid-edit once the edit ends unchanged", async () => {
+    const { store } = await conflictedStore();
+    const task = firstTask(store);
+    store.startEdit(task);
+    await store.sync(); // held back by the edit
+
+    store.finishEdit(task, task.text); // nothing typed: no save to get a 412
+    await vi.advanceTimersByTimeAsync(300);
+
+    expect(store.sheet.tasks.map((t) => t.id)).toEqual(["t1", "phone"]);
+    expect(store.status).toBe("synced");
+  });
+
   it("keeps offline edits across a reload when another device saved since", async () => {
     const tasks = fakeServer(serverText);
     let store = await loadStore(); // the phone
