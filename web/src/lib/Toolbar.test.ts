@@ -243,3 +243,33 @@ describe("Toolbar fresh sheet", () => {
     expect(store.sheet).toEqual(current());
   });
 });
+
+describe("Toolbar export", () => {
+  // East of UTC, just after local midnight the UTC date is still yesterday.
+  const tz = process.env["TZ"];
+  beforeEach(() => {
+    process.env["TZ"] = "Europe/Berlin";
+    vi.useFakeTimers({ toFake: ["Date"] });
+  });
+  afterEach(() => {
+    vi.useRealTimers();
+    if (tz === undefined) delete process.env["TZ"];
+    else process.env["TZ"] = tz;
+  });
+
+  it("names the backup after the local calendar date", () => {
+    vi.setSystemTime(new Date(2026, 9, 23, 1, 30));
+    vi.spyOn(URL, "createObjectURL").mockReturnValue("blob:sheet");
+    vi.spyOn(URL, "revokeObjectURL").mockImplementation(() => undefined);
+    let download: string | undefined;
+    vi.spyOn(HTMLAnchorElement.prototype, "click").mockImplementation(
+      function (this: HTMLAnchorElement) {
+        download = this.download;
+      },
+    );
+
+    button("export").click();
+
+    expect(download).toBe("eisenpaper-2026-10-23.json");
+  });
+});
