@@ -300,6 +300,24 @@ describe("Note drag versus click", () => {
     expect(store.selectedId).toBeNull();
   });
 
+  it("keeps the panes still under the second click of a double-click paced at the OS default", () => {
+    // browsers fire dblclick for two clicks within the OS double-click time:
+    // 400ms by default on GNOME, 500ms on Windows
+    pointer("pointerdown", 100, 100);
+    pointer("pointerup", 100, 100);
+    vi.advanceTimersByTime(450);
+    flushSync();
+    expect(store.selectedId).toBeNull();
+    pointer("pointerdown", 100, 100);
+    pointer("pointerup", 100, 100);
+    note().dispatchEvent(new MouseEvent("dblclick", { bubbles: true }));
+    vi.runAllTimers();
+    flushSync();
+
+    expect(store.editingId).toBe("t1");
+    expect(store.selectedId).toBeNull();
+  });
+
   it("moves the note from the threshold on and commits once on release", () => {
     pointer("pointerdown", 100, 100);
     pointer("pointermove", 106, 100); // exactly 6px
