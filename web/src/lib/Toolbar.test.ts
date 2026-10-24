@@ -262,11 +262,11 @@ describe("Toolbar export", () => {
     vi.spyOn(URL, "createObjectURL").mockReturnValue("blob:sheet");
     vi.spyOn(URL, "revokeObjectURL").mockImplementation(() => undefined);
     let download: string | undefined;
-    vi.spyOn(HTMLAnchorElement.prototype, "click").mockImplementation(
-      function (this: HTMLAnchorElement) {
-        download = this.download;
-      },
-    );
+    vi.spyOn(HTMLAnchorElement.prototype, "click").mockImplementation(function (
+      this: HTMLAnchorElement,
+    ) {
+      download = this.download;
+    });
 
     button("export").click();
 
