@@ -175,6 +175,11 @@ class SheetStore {
     const text = this.#serialize();
     const commits = this.#commits;
     if (text === this.#lastServerText) {
+      // no PUT, so no 412 brings in the save a held-back pull would have
+      if (this.#pullHeld) {
+        await this.#pull(retries);
+        return;
+      }
       this.status = "synced";
       return;
     }
