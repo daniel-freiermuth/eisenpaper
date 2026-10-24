@@ -39,7 +39,6 @@
     moved: boolean;
   } | null = null;
   let dragging = $state(false);
-  let clickTimer: number | undefined;
   let cancelled = false;
 
   // fill, focus and put the caret at the end when entering edit mode
@@ -94,16 +93,13 @@
       store.commit();
       return;
     }
-    clearTimeout(clickTimer);
-    clickTimer = window.setTimeout(() => {
-      store.select(task.id);
-    }, CLICK_DELAY_MS);
+    store.selectLater(task.id, CLICK_DELAY_MS);
   }
 
   function ondblclick(e: MouseEvent): void {
     e.stopPropagation(); // the pane would create a new note
     if (editing) return; // a double-click in the text selects a word
-    clearTimeout(clickTimer);
+    store.cancelSelect();
     store.startEdit(task);
   }
 

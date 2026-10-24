@@ -120,6 +120,8 @@ class SheetStore {
   /** ETag of #lastServerText; null = none known, so only create (If-None-Match) */
   #etag: string | null = null;
   #writeTimer: number | undefined;
+  /** a click's select waiting out the double-click window; see selectLater */
+  #selectTimer: number | undefined;
   /** settles once our PUT in flight is answered; null = none in flight */
   #putting: Promise<void> | null = null;
   /** an edit turned the last pull away; ending the edit runs it */
@@ -402,8 +404,29 @@ class SheetStore {
     this.commit();
   }
 
+  /** Select `id`, or none; a later choice also drops a select from selectLater. */
   select(id: string | null): void {
+    this.cancelSelect();
     this.selectedId = id;
+  }
+
+  /**
+   * Select `id` after `ms`, unless a select (closing the pane too) or a
+   * cancelSelect comes first: a click waits out the double-click window,
+   * and must not undo what the user did in it.
+   */
+  selectLater(id: string, ms: number): void {
+    this.cancelSelect();
+    this.#selectTimer = window.setTimeout(() => {
+      this.#selectTimer = undefined;
+      this.selectedId = id;
+    }, ms);
+  }
+
+  /** Drop the select waiting in selectLater, if any. */
+  cancelSelect(): void {
+    clearTimeout(this.#selectTimer);
+    this.#selectTimer = undefined;
   }
 
   /** File `task` under a project, or under none when `projectId` is null. */
