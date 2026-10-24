@@ -96,6 +96,15 @@
     store.selectLater(task.id, CLICK_DELAY_MS);
   }
 
+  // the browser took the pointer (a scroll, a palm, a system gesture): no
+  // pointerup follows, so abort the drag and put the note back unsaved
+  function onpointercancel(): void {
+    if (press === null) return;
+    if (press.moved) store.move(task, press.taskX, press.taskY);
+    press = null;
+    dragging = false;
+  }
+
   function ondblclick(e: MouseEvent): void {
     e.stopPropagation(); // the pane would create a new note
     if (editing) return; // a double-click in the text selects a word
@@ -164,6 +173,7 @@
   {onpointerdown}
   {onpointermove}
   {onpointerup}
+  {onpointercancel}
   {ondblclick}
   {oncontextmenu}
   {onkeydown}
