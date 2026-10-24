@@ -898,6 +898,49 @@ describe("SheetStore.commit", () => {
     expect(store.status).toBe("synced");
   });
 
+  it("saves no drag position while the drag goes on, even as PUTs land", async () => {
+    const tasks = fakeServer(serverText);
+    const store = await loadStore();
+    fetchMock.mockImplementation(tasks.handle);
+    await store.sync();
+    // every PUT waits on a slow link until released
+    const held: (() => void)[] = [];
+    fetchMock.mockImplementation((url, init) =>
+      init?.method === "PUT"
+        ? new Promise<Response>((resolve) => {
+            held.push(() => void tasks.handle(url, init).then(resolve));
+          })
+        : tasks.handle(url, init),
+    );
+    const task = firstTask(store);
+
+    store.toggleDone(task);
+    await vi.advanceTimersByTimeAsync(300);
+    expect(store.status).toBe("saving");
+    // a note is dragged while that save is in flight; each answer lands
+    // mid-drag, with the note somewhere new
+    for (let i = 1; i <= 4; i++) {
+      store.move(task, 0.5 + i / 16, 0.5);
+      held.shift()?.();
+      await vi.advanceTimersByTimeAsync(0);
+    }
+    expect(puts()).toHaveLength(1);
+    expect(store.status).toBe("synced");
+
+    // the drop commits the note where it ended up, and that alone is saved
+    store.commit();
+    await vi.advanceTimersByTimeAsync(300);
+    held.shift()?.();
+    await vi.advanceTimersByTimeAsync(1000);
+
+    expect(putBodies()).toMatchObject([
+      { tasks: [{ id: "t1", done: true, x: 0.5 }] },
+      { tasks: [{ id: "t1", done: true, x: 0.75 }] },
+    ]);
+    expect(tasks.sheet()).toMatchObject({ tasks: [{ x: 0.75 }] });
+    expect(store.status).toBe("synced");
+  });
+
   it("caches the sheet at once, even when the PUT fails", async () => {
     const store = await syncedStore();
     fetchMock.mockImplementation(server(500));
