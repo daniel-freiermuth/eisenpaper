@@ -325,6 +325,22 @@ describe("SheetStore.sync", () => {
     expect(store.status).toBe("synced");
   });
 
+  it("does not empty tasks.json when the cache it synced is not a valid sheet", async () => {
+    // a day the date input let through, synced, and refused on reload
+    const task = { ...serverTask, day: "20266-10-25", order: 0 };
+    const bad = JSON.stringify({ tasks: [task], archive: [] }, null, 2);
+    storage.set(CACHE_KEY, bad);
+    storage.set(BASE_KEY, bad);
+    const tasks = fakeServer(bad);
+    const store = await loadStore();
+    fetchMock.mockImplementation(tasks.handle);
+    await store.sync();
+    await vi.advanceTimersByTimeAsync(300);
+
+    expect(tasks.sheet()).toEqual(JSON.parse(bad));
+    expect(store.status).toBe("error");
+  });
+
   it("adopts the server sheet when nothing changed here, and caches it", async () => {
     storage.set(CACHE_KEY, emptyText);
     storage.set(BASE_KEY, emptyText); // last synced before t1 was added
