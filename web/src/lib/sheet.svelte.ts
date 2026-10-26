@@ -66,10 +66,13 @@ function cacheRemove(key: string): void {
   }
 }
 
-/** The cached sheet, or an empty one. */
-function loadCache(): Sheet {
+/**
+ * The cached sheet, an empty one when there is none, or null when the
+ * cache holds what parseSheet refuses.
+ */
+function loadCache(): Sheet | null {
   const raw = cacheGet(CACHE_KEY);
-  return (raw === null ? null : parseSheet(raw)) ?? emptySheet();
+  return raw === null ? emptySheet() : parseSheet(raw);
 }
 
 /** The sheet's savedAt as the app before BASE_KEY stamped it; 0 = none. */
@@ -102,7 +105,9 @@ function legacyCache(): string | null {
  * 412 instead of overwriting it, and is merged with that save and retried.
  */
 class SheetStore {
-  sheet = $state<Sheet>(loadCache());
+  /** the cache read on load; null = there but not a valid sheet */
+  readonly #cache = loadCache();
+  sheet = $state<Sheet>(this.#cache ?? emptySheet());
   status = $state<SyncStatus>("loading");
   /** id of the task being edited in place */
   editingId = $state<string | null>(null);
@@ -117,9 +122,12 @@ class SheetStore {
   readonly #legacyCache = legacyCache();
   /**
    * tasks.json as last seen on the server, or a cache from before BASE_KEY
-   * standing in for it; null = never seen, or none there
+   * standing in for it; null = never seen, or none there. A cache we can't
+   * read drops its base: the empty sheet standing in for it would otherwise
+   * merge as deleting everything in that base.
    */
-  #lastServerText: string | null = cacheGet(BASE_KEY) ?? this.#legacyCache;
+  #lastServerText: string | null =
+    this.#cache === null ? null : (cacheGet(BASE_KEY) ?? this.#legacyCache);
   /** ETag of #lastServerText; null = none known, so only create (If-None-Match) */
   #etag: string | null = null;
   #writeTimer: number | undefined;
