@@ -970,6 +970,78 @@ describe("SheetStore.commit", () => {
     expect(store.status).toBe("synced");
   });
 
+  it("caches a cancelled drag back where it began after a PUT landed mid-drag", async () => {
+    const tasks = fakeServer(serverText);
+    let store = await loadStore();
+    fetchMock.mockImplementation(tasks.handle);
+    await store.sync();
+    const held: (() => void)[] = [];
+    fetchMock.mockImplementation((url, init) =>
+      init?.method === "PUT"
+        ? new Promise<Response>((resolve) => {
+            held.push(() => void tasks.handle(url, init).then(resolve));
+          })
+        : tasks.handle(url, init),
+    );
+    const task = firstTask(store);
+
+    store.toggleDone(task);
+    await vi.advanceTimersByTimeAsync(300);
+    store.move(task, 0.9, 0.5);
+    held.shift()?.();
+    await vi.advanceTimersByTimeAsync(0);
+    // the PUT's answer cached the sheet with the note mid-drag
+    const cached = (): unknown => JSON.parse(storage.get(CACHE_KEY) ?? "null");
+    expect(cached()).toMatchObject({ tasks: [{ x: 0.9 }] });
+
+    // the browser cancels the drag: Note puts the note back and commits
+    store.move(task, 0.5, 0.5);
+    store.commit();
+    await vi.advanceTimersByTimeAsync(1000);
+
+    expect(cached()).toMatchObject({ tasks: [{ x: 0.5 }] });
+    expect(puts()).toHaveLength(1); // the sheet is back to what was saved
+
+    // a reload neither brings the drag back nor pushes it
+    fetchMock.mockImplementation(tasks.handle);
+    store = await loadStore();
+    await store.sync();
+    expect(firstTask(store)).toMatchObject({ x: 0.5, done: true });
+    expect(tasks.sheet()).toMatchObject({ tasks: [{ x: 0.5, done: true }] });
+  });
+
+  it("saves a cancelled drag back where it began after a pull pushed it mid-drag", async () => {
+    const tasks = fakeServer(serverText);
+    const store = await loadStore();
+    fetchMock.mockImplementation(tasks.handle);
+    await store.sync();
+    const task = firstTask(store);
+
+    store.move(task, 0.9, 0.5);
+    // the window regains focus mid-drag, after another device saved
+    tasks.save({
+      tasks: [serverTask, { ...serverTask, id: "t2", created: 2 }],
+      archive: [],
+    });
+    await store.sync();
+    expect(tasks.sheet()).toMatchObject({
+      tasks: [{ id: "t1", x: 0.9 }, { id: "t2" }],
+    });
+
+    // the merge replaced the sheet; the note now holds the merged task
+    store.move(firstTask(store), 0.5, 0.5);
+    store.commit();
+    await vi.advanceTimersByTimeAsync(1000);
+
+    expect(tasks.sheet()).toMatchObject({
+      tasks: [{ id: "t1", x: 0.5 }, { id: "t2" }],
+    });
+    expect(JSON.parse(storage.get(CACHE_KEY) ?? "null")).toMatchObject({
+      tasks: [{ id: "t1", x: 0.5 }, { id: "t2" }],
+    });
+    expect(store.status).toBe("synced");
+  });
+
   it("caches the sheet at once, even when the PUT fails", async () => {
     const store = await syncedStore();
     fetchMock.mockImplementation(server(500));
