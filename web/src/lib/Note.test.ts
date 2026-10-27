@@ -360,6 +360,9 @@ describe("Note drag versus click", () => {
     pointer("pointercancel", 200, 150);
     expect(note().classList.contains("dragging")).toBe(false);
     expect(task()).toMatchObject({ x: 0.5, y: 0.5 });
+    // a save or pull during the drag may have stored where the note was, so
+    // the note is committed back where it was pressed
+    expect(commit).toHaveBeenCalledOnce();
 
     // a hovering mouse or pen sends moves with no press behind them
     pointer("pointermove", 400, 300);
@@ -368,7 +371,7 @@ describe("Note drag versus click", () => {
     flushSync();
 
     expect(task()).toMatchObject({ x: 0.5, y: 0.5 });
-    expect(commit).not.toHaveBeenCalled();
+    expect(commit).toHaveBeenCalledOnce();
     expect(store.selectedId).toBeNull();
   });
 });
