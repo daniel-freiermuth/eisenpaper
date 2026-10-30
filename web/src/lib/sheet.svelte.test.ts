@@ -94,6 +94,7 @@ function fakeServer(initial: string | null) {
 
 const CACHE_KEY = "eisenpaper.v1";
 const BASE_KEY = "eisenpaper.v1.base";
+const WRITE_DELAY_MS = 300;
 
 /** A browser copy that never saw `serverSheet`. */
 const localText = JSON.stringify(
@@ -164,7 +165,7 @@ describe("SheetStore.sync", () => {
     const task = store.sheet.tasks[0];
     if (task === undefined) throw new Error("server sheet not adopted");
     store.toggleDone(task);
-    await vi.advanceTimersByTimeAsync(300);
+    await vi.advanceTimersByTimeAsync(WRITE_DELAY_MS);
     expect(store.status).toBe("offline");
 
     fetchMock.mockReset();
@@ -286,7 +287,7 @@ describe("SheetStore.sync", () => {
     const task = store.sheet.tasks[0];
     if (task === undefined) throw new Error("cached sheet not loaded");
     store.toggleDone(task);
-    await vi.advanceTimersByTimeAsync(300);
+    await vi.advanceTimersByTimeAsync(WRITE_DELAY_MS);
 
     expect(tasks.sheet()).toEqual(JSON.parse(corrupt));
     expect(store.status).toBe("error");
@@ -309,7 +310,7 @@ describe("SheetStore.sync", () => {
     const task = store.sheet.tasks[0];
     if (task === undefined) throw new Error("cached sheet not loaded");
     store.toggleDone(task);
-    await vi.advanceTimersByTimeAsync(300);
+    await vi.advanceTimersByTimeAsync(WRITE_DELAY_MS);
 
     expect(tasks.sheet()).toEqual(serverSheet);
     expect(store.status).toBe("error");
@@ -335,7 +336,7 @@ describe("SheetStore.sync", () => {
     const store = await loadStore();
     fetchMock.mockImplementation(tasks.handle);
     await store.sync();
-    await vi.advanceTimersByTimeAsync(300);
+    await vi.advanceTimersByTimeAsync(WRITE_DELAY_MS);
 
     expect(tasks.sheet()).toEqual(JSON.parse(bad));
     expect(store.status).toBe("error");
@@ -387,7 +388,7 @@ describe("SheetStore.sync", () => {
     const task = store.sheet.tasks[0];
     if (task === undefined) throw new Error("server sheet not adopted");
     store.toggleDone(task);
-    await vi.advanceTimersByTimeAsync(300);
+    await vi.advanceTimersByTimeAsync(WRITE_DELAY_MS);
 
     expect(tasks.sheet()).toMatchObject({
       tasks: [
@@ -431,11 +432,11 @@ describe("SheetStore.sync", () => {
       const { store, tasks } = await conflictedStore();
       store.toggleDone(firstTask(store));
       store.addDraft(0.2, 0.2); // the save goes out, and gets 412, mid-draft
-      await vi.advanceTimersByTimeAsync(300);
+      await vi.advanceTimersByTimeAsync(WRITE_DELAY_MS);
       expect(store.status).toBe("saving");
 
       end(store);
-      await vi.advanceTimersByTimeAsync(300);
+      await vi.advanceTimersByTimeAsync(WRITE_DELAY_MS);
 
       expect(tasks.sheet()).toMatchObject({
         tasks: [{ id: "t1", done: true }, { id: "phone" }],
@@ -458,15 +459,15 @@ describe("SheetStore.sync", () => {
     );
     const task = firstTask(store);
     store.toggleDone(task);
-    await vi.advanceTimersByTimeAsync(300); // 412: the merge's GET is in flight
+    await vi.advanceTimersByTimeAsync(WRITE_DELAY_MS); // 412: the merge's GET is in flight
     store.startEdit(task);
     releaseGet();
-    await vi.advanceTimersByTimeAsync(300);
+    await vi.advanceTimersByTimeAsync(WRITE_DELAY_MS);
     expect(store.status).toBe("saving");
 
     fetchMock.mockImplementation(tasks.handle);
     store.cancelEdit();
-    await vi.advanceTimersByTimeAsync(300);
+    await vi.advanceTimersByTimeAsync(WRITE_DELAY_MS);
 
     expect(tasks.sheet()).toMatchObject({
       tasks: [{ id: "t1", done: true }, { id: "phone" }],
@@ -481,7 +482,7 @@ describe("SheetStore.sync", () => {
     await store.sync(); // held back by the edit
 
     store.finishEdit(task, task.text); // nothing typed: no save to get a 412
-    await vi.advanceTimersByTimeAsync(300);
+    await vi.advanceTimersByTimeAsync(WRITE_DELAY_MS);
 
     expect(store.sheet.tasks.map((t) => t.id)).toEqual(["t1", "phone"]);
     expect(store.status).toBe("synced");
@@ -497,7 +498,7 @@ describe("SheetStore.sync", () => {
     const task = store.sheet.tasks[0];
     if (task === undefined) throw new Error("server sheet not adopted");
     store.toggleDone(task);
-    await vi.advanceTimersByTimeAsync(300);
+    await vi.advanceTimersByTimeAsync(WRITE_DELAY_MS);
     expect(store.status).toBe("offline");
 
     // the desktop edits later; then the phone reloads the app, back online
@@ -525,7 +526,7 @@ describe("SheetStore.sync", () => {
     const draft = store.draft;
     if (draft === null) throw new Error("no draft");
     store.finishEdit(draft, "buy milk");
-    await vi.advanceTimersByTimeAsync(300);
+    await vi.advanceTimersByTimeAsync(WRITE_DELAY_MS);
 
     expect(tasks.sheet()).toMatchObject({ tasks: [{ text: "buy milk" }] });
     expect(store.sheet.tasks.map((t) => t.text)).toEqual(["buy milk"]);
@@ -608,7 +609,7 @@ describe("SheetStore.sync", () => {
     await store.sync();
     const imported = { ...serverTask, id: "imported", text: "renew passport" };
     store.replace({ tasks: [imported], archive: [], savedAt: 100 });
-    await vi.advanceTimersByTimeAsync(300);
+    await vi.advanceTimersByTimeAsync(WRITE_DELAY_MS);
     expect(store.status).toBe("offline");
 
     // the phone reloads the app, back online
@@ -643,7 +644,7 @@ describe("SheetStore.sync", () => {
     });
     await store.sync();
     store.replace({ tasks: [], archive: [], note: "mine" });
-    await vi.advanceTimersByTimeAsync(300);
+    await vi.advanceTimersByTimeAsync(WRITE_DELAY_MS);
 
     expect(store.status).toBe("error");
     expect(puts()).toHaveLength(4); // the save plus three merges
@@ -680,12 +681,12 @@ describe("SheetStore.sync", () => {
     const draft = store.draft;
     if (draft === null) throw new Error("no draft");
     store.finishEdit(draft, "buy milk");
-    await vi.advanceTimersByTimeAsync(300);
+    await vi.advanceTimersByTimeAsync(WRITE_DELAY_MS);
 
     fetchMock.mockReset();
     fetchMock.mockImplementation(tasks.handle);
     await store.sync();
-    await vi.advanceTimersByTimeAsync(300);
+    await vi.advanceTimersByTimeAsync(WRITE_DELAY_MS);
 
     expect(tasks.sheet()).toMatchObject({
       tasks: [{ id: "t1" }, { text: "buy milk" }],
@@ -774,7 +775,7 @@ describe("SheetStore without a usable localStorage", () => {
       removeItem: (k: string) => storage.delete(k),
     });
     store.replace({ tasks: [], archive: [] });
-    await vi.advanceTimersByTimeAsync(300);
+    await vi.advanceTimersByTimeAsync(WRITE_DELAY_MS);
 
     expect(putBodies()).toMatchObject([{ tasks: [], archive: [] }]);
     expect(store.status).toBe("synced");
@@ -847,7 +848,7 @@ describe("SheetStore without a usable localStorage", () => {
     const draft = store.draft;
     if (draft === null) throw new Error("no draft");
     store.finishEdit(draft, "buy milk");
-    await vi.advanceTimersByTimeAsync(300);
+    await vi.advanceTimersByTimeAsync(WRITE_DELAY_MS);
     expect(store.status).toBe("synced");
 
     // another device deletes the note
@@ -885,7 +886,7 @@ describe("SheetStore.commit", () => {
     store.toggleDone(task);
     await vi.advanceTimersByTimeAsync(200);
     store.finishEdit(task, "file tax return today"); // re-arms the delay
-    await vi.advanceTimersByTimeAsync(299);
+    await vi.advanceTimersByTimeAsync(WRITE_DELAY_MS - 1);
     expect(puts()).toHaveLength(0);
 
     await vi.advanceTimersByTimeAsync(1);
@@ -914,12 +915,12 @@ describe("SheetStore.commit", () => {
     const task = firstTask(store);
 
     store.toggleDone(task);
-    await vi.advanceTimersByTimeAsync(300);
+    await vi.advanceTimersByTimeAsync(WRITE_DELAY_MS);
     expect(store.status).toBe("saving");
     // undone before the save lands: the sheet is the old server text again,
     // so its own write sends nothing
     store.toggleDone(task);
-    await vi.advanceTimersByTimeAsync(300);
+    await vi.advanceTimersByTimeAsync(WRITE_DELAY_MS);
     release();
     await vi.advanceTimersByTimeAsync(1000);
 
@@ -944,7 +945,7 @@ describe("SheetStore.commit", () => {
     const task = firstTask(store);
 
     store.toggleDone(task);
-    await vi.advanceTimersByTimeAsync(300);
+    await vi.advanceTimersByTimeAsync(WRITE_DELAY_MS);
     expect(store.status).toBe("saving");
     // a note is dragged while that save is in flight; each answer lands
     // mid-drag, with the note somewhere new
@@ -958,7 +959,7 @@ describe("SheetStore.commit", () => {
 
     // the drop commits the note where it ended up, and that alone is saved
     store.commit();
-    await vi.advanceTimersByTimeAsync(300);
+    await vi.advanceTimersByTimeAsync(WRITE_DELAY_MS);
     held.shift()?.();
     await vi.advanceTimersByTimeAsync(1000);
 
@@ -980,7 +981,7 @@ describe("SheetStore.commit", () => {
     const cached = (): unknown => JSON.parse(storage.get(CACHE_KEY) ?? "null");
     expect(cached()).toMatchObject({ tasks: [{ id: "t1", done: true }] });
 
-    await vi.advanceTimersByTimeAsync(300);
+    await vi.advanceTimersByTimeAsync(WRITE_DELAY_MS);
     expect(puts()).toHaveLength(1);
     expect(store.status).toBe("error");
     expect(cached()).toMatchObject({ tasks: [{ id: "t1", done: true }] });
@@ -1008,9 +1009,9 @@ describe("SheetStore.commit", () => {
 
     const task = firstTask(store);
     store.toggleDone(task);
-    await vi.advanceTimersByTimeAsync(300); // its save is still in flight...
+    await vi.advanceTimersByTimeAsync(WRITE_DELAY_MS); // its save is still in flight...
     store.finishEdit(task, "file tax return today");
-    await vi.advanceTimersByTimeAsync(300); // ...when this one's is due
+    await vi.advanceTimersByTimeAsync(WRITE_DELAY_MS); // ...when this one's is due
     // answers to saves come back newest first, ahead of any GET's
     for (;;) {
       const next = held.findLast((h) => h.put) ?? held[0];
@@ -1042,7 +1043,7 @@ describe("SheetStore.commit", () => {
     // ~40k UTF-16 code units, but ~120k UTF-8 bytes
     const text = "締め切り".repeat(10_000);
     store.replace({ tasks: [{ ...serverTask, text }], archive: [] });
-    await vi.advanceTimersByTimeAsync(300);
+    await vi.advanceTimersByTimeAsync(WRITE_DELAY_MS);
 
     expect(store.exportText().length).toBeLessThan(60_000);
     expect(putBodies()).toMatchObject([{ tasks: [{ text }] }]);
@@ -1057,7 +1058,7 @@ async function twoTaskStore() {
   const draft = store.draft;
   if (draft === null) throw new Error("no draft");
   store.finishEdit(draft, "buy milk");
-  await vi.advanceTimersByTimeAsync(300);
+  await vi.advanceTimersByTimeAsync(WRITE_DELAY_MS);
   expect(puts()).toHaveLength(1);
   fetchMock.mockClear();
   return store;
@@ -1166,7 +1167,7 @@ describe("SheetStore.toggleDone", () => {
     expect("doneAt" in task).toBe(false);
     // back to exactly what the server holds, so there is nothing to save
     expect(store.exportText()).toBe(serverText);
-    await vi.advanceTimersByTimeAsync(300);
+    await vi.advanceTimersByTimeAsync(WRITE_DELAY_MS);
     expect(puts()).toEqual([]);
     expect(store.status).toBe("synced");
   });
@@ -1180,7 +1181,7 @@ describe("SheetStore.remove", () => {
     store.remove(firstTask(store));
 
     expect(store.sheet.tasks).toEqual([open]);
-    await vi.advanceTimersByTimeAsync(300);
+    await vi.advanceTimersByTimeAsync(WRITE_DELAY_MS);
     expect(putBodies()).toMatchObject([{ tasks: [open] }]);
     expect(putBodies()).toHaveLength(1);
   });
@@ -1250,7 +1251,7 @@ describe("SheetStore.start", () => {
     setVisibility("visible");
     fetchMock.mockImplementation(server(500));
     store.toggleDone(firstTask(store));
-    await vi.advanceTimersByTimeAsync(300);
+    await vi.advanceTimersByTimeAsync(WRITE_DELAY_MS);
     expect(puts()).toHaveLength(1);
     expect(store.status).toBe("error");
 
@@ -1266,7 +1267,7 @@ describe("SheetStore.start", () => {
     setVisibility("visible");
     expect(fetchMock).not.toHaveBeenCalled();
 
-    await vi.advanceTimersByTimeAsync(300);
+    await vi.advanceTimersByTimeAsync(WRITE_DELAY_MS);
     expect(putBodies()).toMatchObject([{ tasks: [{ id: "t1", done: true }] }]);
   });
 
@@ -1294,7 +1295,7 @@ describe("SheetStore.start", () => {
     // a ~40 KB sheet whose debounced PUT is still in flight on a slow link
     const text = "x".repeat(40_000);
     store.replace({ tasks: [{ ...serverTask, text }], archive: [] });
-    await vi.advanceTimersByTimeAsync(300);
+    await vi.advanceTimersByTimeAsync(WRITE_DELAY_MS);
     expect(puts()).toHaveLength(1);
 
     // a newer edit, then the tab is hidden before its delay runs out; it
@@ -1374,7 +1375,7 @@ describe("SheetStore edit lifecycle", () => {
 
   /** Nothing committed: sheet, cache and server all as loaded. */
   async function expectUncommitted(store: Store): Promise<void> {
-    await vi.advanceTimersByTimeAsync(300);
+    await vi.advanceTimersByTimeAsync(WRITE_DELAY_MS);
     expect(store.exportText()).toBe(cachedText);
     expect(storage.get(CACHE_KEY)).toBe(cachedText);
     expect(fetchMock).not.toHaveBeenCalled();
@@ -1412,7 +1413,7 @@ describe("SheetStore edit lifecycle", () => {
     ]);
     expect(storage.get(CACHE_KEY)).toBe(store.exportText());
 
-    await vi.advanceTimersByTimeAsync(300);
+    await vi.advanceTimersByTimeAsync(WRITE_DELAY_MS);
     expect(putBodies()).toMatchObject([
       { tasks: [{ id: "t1" }, { id: "t2" }, added] },
     ]);
@@ -1427,7 +1428,7 @@ describe("SheetStore edit lifecycle", () => {
     expect(store.editingId).toBeNull();
     expect(store.sheet.tasks).toEqual([serverTask]);
 
-    await vi.advanceTimersByTimeAsync(300);
+    await vi.advanceTimersByTimeAsync(WRITE_DELAY_MS);
     expect(putBodies()).toEqual([{ tasks: [serverTask], archive: [] }]);
   });
 
@@ -1441,7 +1442,7 @@ describe("SheetStore edit lifecycle", () => {
     const edited = { ...plumber, text: "call the plumber today" };
     expect(store.sheet.tasks).toEqual([serverTask, edited]);
 
-    await vi.advanceTimersByTimeAsync(300);
+    await vi.advanceTimersByTimeAsync(WRITE_DELAY_MS);
     expect(putBodies()).toEqual([{ tasks: [serverTask, edited], archive: [] }]);
   });
 
