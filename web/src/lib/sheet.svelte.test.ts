@@ -149,14 +149,20 @@ async function resync(
   await store.sync();
 }
 
+// Map-backed localStorage; tests pass their own setItem to simulate failures
+const stubStorage = (
+  setItem: (k: string, v: string) => void = (k, v) => void storage.set(k, v),
+) =>
+  vi.stubGlobal("localStorage", {
+    getItem: (k: string) => storage.get(k) ?? null,
+    setItem,
+    removeItem: (k: string) => storage.delete(k),
+  });
+
 beforeEach(() => {
   vi.useFakeTimers();
   storage = new Map<string, string>();
-  vi.stubGlobal("localStorage", {
-    getItem: (k: string) => storage.get(k) ?? null,
-    setItem: (k: string, v: string) => storage.set(k, v),
-    removeItem: (k: string) => storage.delete(k),
-  });
+  stubStorage();
   vi.stubGlobal("window", globalThis);
   fetchMock = vi.fn<typeof fetch>();
   vi.stubGlobal("fetch", fetchMock);
@@ -770,11 +776,7 @@ describe("SheetStore without a usable localStorage", () => {
 
   it("still saves to the server when the browser copy cannot be written", async () => {
     const store = await syncedStore();
-    vi.stubGlobal("localStorage", {
-      getItem: (k: string) => storage.get(k) ?? null,
-      setItem: quotaExceeded,
-      removeItem: (k: string) => storage.delete(k),
-    });
+    stubStorage(quotaExceeded);
     store.replace({ tasks: [], archive: [] });
     await vi.advanceTimersByTimeAsync(300);
 
@@ -784,11 +786,7 @@ describe("SheetStore without a usable localStorage", () => {
 
   it("finishes adopting a server sheet that cannot be cached", async () => {
     const store = await loadStore();
-    vi.stubGlobal("localStorage", {
-      getItem: (k: string) => storage.get(k) ?? null,
-      setItem: quotaExceeded,
-      removeItem: (k: string) => storage.delete(k),
-    });
+    stubStorage(quotaExceeded);
     fetchMock.mockImplementation(server(204));
     await store.sync();
 
@@ -798,13 +796,9 @@ describe("SheetStore without a usable localStorage", () => {
 
   it("keeps another device's task when only the base could be cached", async () => {
     let cacheFull = false;
-    vi.stubGlobal("localStorage", {
-      getItem: (k: string) => storage.get(k) ?? null,
-      setItem: (k: string, v: string) => {
-        if (cacheFull && k === CACHE_KEY) quotaExceeded();
-        storage.set(k, v);
-      },
-      removeItem: (k: string) => storage.delete(k),
+    stubStorage((k, v) => {
+      if (cacheFull && k === CACHE_KEY) quotaExceeded();
+      storage.set(k, v);
     });
     const tasks = fakeServer(serverText);
     const store = await storeSyncedWith(tasks);
@@ -827,13 +821,9 @@ describe("SheetStore without a usable localStorage", () => {
 
   it("keeps another device's deletion when only the sheet could be cached", async () => {
     let baseFull = false;
-    vi.stubGlobal("localStorage", {
-      getItem: (k: string) => storage.get(k) ?? null,
-      setItem: (k: string, v: string) => {
-        if (baseFull && k === BASE_KEY) quotaExceeded();
-        storage.set(k, v);
-      },
-      removeItem: (k: string) => storage.delete(k),
+    stubStorage((k, v) => {
+      if (baseFull && k === BASE_KEY) quotaExceeded();
+      storage.set(k, v);
     });
     const tasks = fakeServer(serverText);
     const store = await storeSyncedWith(tasks);
