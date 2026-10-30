@@ -1172,6 +1172,23 @@ describe("SheetStore.toggleDone", () => {
   });
 });
 
+describe("SheetStore.schedule", () => {
+  it("refuses a day tasks.json would not parse, keeping the sheet syncable", async () => {
+    const store = await syncedStore();
+    const task = firstTask(store);
+
+    // a date input hands over whatever was typed, five-digit years included
+    store.schedule(task.id, "20266-10-25", Infinity);
+    store.schedule(task.id, "2026-11-31", Infinity);
+
+    expect("day" in task).toBe(false);
+    expect(store.exportText()).toBe(serverText);
+    await vi.advanceTimersByTimeAsync(300);
+    expect(puts()).toEqual([]);
+    expect(store.status).toBe("synced");
+  });
+});
+
 describe("SheetStore.remove", () => {
   it("tears off only the matching task and saves the result", async () => {
     const store = await twoTaskStore();

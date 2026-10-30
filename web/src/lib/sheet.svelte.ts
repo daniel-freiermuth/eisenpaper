@@ -2,6 +2,7 @@ import {
   clampPosition,
   emptySheet,
   freshSheet,
+  isDay,
   mergeSheets,
   newId,
   nextProjectColor,
@@ -424,8 +425,13 @@ class SheetStore {
     this.commit();
   }
 
-  /** Drop from the schedule pane: a day and index, or null = backlog. */
+  /**
+   * Drop from the schedule pane: a day and index, or null = backlog. A day
+   * the sheet schema refuses (a date input takes any typed year) is ignored:
+   * saved, it would leave tasks.json unparseable on every device.
+   */
   schedule(id: string, day: string | null, index: number): void {
+    if (day !== null && !isDay(day)) return;
     placeTask(this.sheet.tasks, id, day, index);
     this.commit();
   }
