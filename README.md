@@ -94,18 +94,30 @@ usage: eisenpaper [--host H] [--port P] [--web DIR] [--data FILE]
 ## How syncing works
 
 - The server's `tasks.json` is the source of truth. `GET /tasks.json` reads
-  it; `PUT /tasks.json` replaces it atomically (fsynced temp file + rename),
-  so a crash, a power loss or a file syncer such as Syncthing never sees half
-  a sheet. If `tasks.json` is a symlink — say into a Syncthing folder — the
-  file it points at is updated (or created, if it does not exist yet) and the
-  link kept. Uploads that are not a sheet are refused; the stored body is
-  otherwise kept byte for byte.
+  it and returns its `ETag`; `PUT /tasks.json` replaces it atomically
+  (fsynced temp file + rename), so a crash, a power loss or a file syncer
+  such as Syncthing never sees half a sheet. If `tasks.json` is a symlink —
+  say into a Syncthing folder — the file it points at is updated (or
+  created, if it does not exist yet) and the link kept. Uploads that are not
+  a sheet are refused; the stored body is otherwise kept byte for byte.
+- A `PUT` must name the version it replaces: `If-Match` with the current
+  sheet's `ETag`, or `If-None-Match: *` to create a sheet where there is
+  none. A stale tag is refused with `412 Precondition Failed`, a `PUT` with
+  neither header with `428 Precondition Required`. To restore a backup over
+  whatever sheet is there, send `If-Match: *` (`If-None-Match: *` if there
+  is none yet):
+  `curl -X PUT -H 'If-Match: *' --data-binary @backup.json http://localhost:8741/tasks.json`.
 - Every change is cached in the browser right away and written to the
   server shortly after. If the server is unreachable, the toolbar shows
   _offline_ and the edits are pushed once it is back.
-- On sync, the side with the newer `savedAt` wins. A device that has never
-  seen the server adds its tasks to the server's sheet instead of replacing
-  it.
+- On sync, the browser's sheet and the server's are merged against the
+  server version the browser last saw: tasks and projects by `id`, archive
+  entries by `at`, field by field. A change made on only one side is kept;
+  when both changed the same field, the browser's value wins. An item one
+  side deleted stays deleted unless the other side changed it. A device
+  that has never seen the server adds its tasks to the server's sheet. A
+  save refused with `412` because another device saved first is merged
+  with that save and retried.
 
 ## The sheet format
 
@@ -130,8 +142,7 @@ usage: eisenpaper [--host H] [--port P] [--web DIR] [--data FILE]
   "archive": [{ "at": 1790228357000, "tasks": [] }],
   "projects": [
     { "id": "mvggxqlqt06i6w12d6ke7", "name": "admin", "color": "#2f5d9e" }
-  ],
-  "savedAt": 1790228400000
+  ]
 }
 ```
 
