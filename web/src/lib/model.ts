@@ -71,6 +71,21 @@ export function withAlpha(rgb: string, alpha: number): string {
  */
 const FiniteSchema = v.pipe(v.number(), v.finite());
 
+/** A local date, YYYY-MM-DD, that is also a real calendar day. */
+const DaySchema = v.pipe(
+  v.string(),
+  v.isoDate(),
+  // isoDate checks only the format; "2026-11-31" must not pass.
+  v.check((s) => {
+    const [y, m, d] = s.split("-").map(Number) as [number, number, number];
+    const date = new Date(y, m - 1, d);
+    return date.getMonth() === m - 1 && date.getDate() === d;
+  }, "Invalid calendar date"),
+);
+
+/** Whether `day` is one a task may carry and tasks.json still parse. */
+export const isDay = (day: string): boolean => v.is(DaySchema, day);
+
 /** One scrap on the sheet. Positions are normalized to the pane (0..1). */
 export const TaskSchema = v.looseObject({
   id: v.string(),
@@ -83,18 +98,7 @@ export const TaskSchema = v.looseObject({
   created: FiniteSchema,
   doneAt: v.optional(FiniteSchema),
   /** scheduled local date, YYYY-MM-DD; absent = backlog */
-  day: v.optional(
-    v.pipe(
-      v.string(),
-      v.isoDate(),
-      // isoDate checks only the format; "2026-11-31" must not pass.
-      v.check((s) => {
-        const [y, m, d] = s.split("-").map(Number) as [number, number, number];
-        const date = new Date(y, m - 1, d);
-        return date.getMonth() === m - 1 && date.getDate() === d;
-      }, "Invalid calendar date"),
-    ),
-  ),
+  day: v.optional(DaySchema),
   /** position within its day; meaningless without `day` */
   order: v.optional(FiniteSchema),
   /** id of the task's project; absent = none */
