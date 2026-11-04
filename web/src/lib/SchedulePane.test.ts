@@ -16,6 +16,7 @@ import { addDays, tasksOn } from "./schedule";
 import SchedulePane from "./SchedulePane.svelte";
 import { store } from "./sheet.svelte";
 import { today } from "./today.svelte";
+import { buttonLabelled, el } from "./test-dom";
 
 // SchedulePane is the real host: each TaskList gets its zone and tasks from
 // the pane, so the slot and the drop routing are exercised the way the app
@@ -88,12 +89,6 @@ function lift(
   flushSync();
 }
 
-function el(selector: string): HTMLElement {
-  const found = document.querySelector<HTMLElement>(selector);
-  if (found === null) throw new Error(`nothing matches ${selector}`);
-  return found;
-}
-
 /** The list a zone renders: ids, `id*` for the lifted scrap, `|` for the slot. */
 function layout(zone: string): string[] {
   return Array.from(el(`[data-zone="${zone}"] .list`).children, (child) => {
@@ -117,13 +112,8 @@ function landing(zone: string): string[] {
 const dayIds = (day: string): string[] =>
   tasksOn(store.sheet.tasks, day).map((t) => t.id);
 
-function navButton(label: string): HTMLButtonElement {
-  const found = Array.from(
-    document.querySelectorAll<HTMLButtonElement>(".nav button"),
-  ).find((b) => b.textContent.trim() === label);
-  if (found === undefined) throw new Error(`no "${label}" button`);
-  return found;
-}
+const navButton = (label: string): HTMLButtonElement =>
+  buttonLabelled(label, ".nav button");
 
 const shownDays = (): string[] =>
   Array.from(

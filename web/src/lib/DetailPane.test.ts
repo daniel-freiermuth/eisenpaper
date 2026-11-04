@@ -14,6 +14,7 @@ import DetailPane from "./DetailPane.svelte";
 import { addDays } from "./schedule";
 import { store } from "./sheet.svelte";
 import { today } from "./today.svelte";
+import { buttonLabelled } from "./test-dom";
 
 let pane: Record<string, unknown>;
 let commit: MockInstance<() => void>;
@@ -29,13 +30,8 @@ const onDay = (id: string, order: number) => ({
   order,
 });
 
-function quick(label: string): HTMLButtonElement {
-  const b = [
-    ...document.querySelectorAll<HTMLButtonElement>("aside button"),
-  ].find((el) => el.textContent === label);
-  if (b === undefined) throw new Error(`no "${label}" button`);
-  return b;
-}
+const quick = (label: string): HTMLButtonElement =>
+  buttonLabelled(label, "aside button");
 
 beforeEach(() => {
   store.select(null);
