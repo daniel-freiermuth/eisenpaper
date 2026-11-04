@@ -144,7 +144,7 @@
 
   .tinted:hover,
   .tinted:focus-visible {
-    box-shadow: 0 2px 7px rgb(43 42 38 / 35%);
+    box-shadow: 0 2px 7px rgb(from var(--ink) r g b / 35%);
   }
 
   /* the computed colours already carry the fading; opacity would undo

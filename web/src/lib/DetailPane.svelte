@@ -158,7 +158,7 @@
     gap: 10px;
     background: #efe9d8;
     border-left: 2px solid var(--faint);
-    box-shadow: -4px 0 18px rgb(43 42 38 / 15%);
+    box-shadow: -4px 0 18px rgb(from var(--ink) r g b / 15%);
     transform: translateX(105%);
     transition: transform 0.2s ease;
     z-index: 28; /* under the archive and settings panels */

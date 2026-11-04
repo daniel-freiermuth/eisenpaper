@@ -238,7 +238,7 @@
     opacity: 0.85;
     z-index: 10;
     background: rgb(from var(--highlight) r g b / 75%);
-    box-shadow: 2px 3px 8px rgb(43 42 38 / 18%);
+    box-shadow: 2px 3px 8px rgb(from var(--ink) r g b / 18%);
   }
 
   .selected {
@@ -279,7 +279,7 @@
 
   .tinted:hover,
   .tinted:focus-visible {
-    box-shadow: 0 2px 7px rgb(43 42 38 / 35%);
+    box-shadow: 0 2px 7px rgb(from var(--ink) r g b / 35%);
   }
 
   .tinted .project {

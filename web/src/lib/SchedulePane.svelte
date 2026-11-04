@@ -269,7 +269,7 @@
     right: 10px;
     transform: rotate(-1deg);
     color: var(--accent);
-    box-shadow: 1px 2px 6px rgb(43 42 38 / 15%);
+    box-shadow: 1px 2px 6px rgb(from var(--ink) r g b / 15%);
   }
 
   /* ---- days ---- */
@@ -383,7 +383,7 @@
     pointer-events: none;
     background: rgb(from var(--highlight) r g b / 90%);
     border-radius: 3px;
-    box-shadow: 2px 4px 12px rgb(43 42 38 / 22%);
+    box-shadow: 2px 4px 12px rgb(from var(--ink) r g b / 22%);
     transform: rotate(-1.5deg);
     cursor: grabbing;
   }
@@ -417,7 +417,7 @@
       border-right: none;
       border-top: 1.5px solid rgb(from var(--pencil) r g b / 55%);
       background: #efe9d8;
-      box-shadow: 0 -4px 14px rgb(43 42 38 / 10%);
+      box-shadow: 0 -4px 14px rgb(from var(--ink) r g b / 10%);
       transition: height 0.2s ease;
     }
 
