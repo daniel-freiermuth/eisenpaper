@@ -13,6 +13,7 @@ import {
 import DetailPane from "./DetailPane.svelte";
 import PriorityPane from "./PriorityPane.svelte";
 import { store } from "./sheet.svelte";
+import { pointer } from "./test-events";
 
 // PriorityPane is the real host: it derives each note's `editing` prop from
 // the store and renders the draft, so edits flow through the same paths as
@@ -64,19 +65,6 @@ function press(el: HTMLElement, key: string, shiftKey = false): KeyboardEvent {
   el.dispatchEvent(e);
   flushSync();
   return e;
-}
-
-function pointer(type: string, clientX: number, clientY: number): void {
-  note().dispatchEvent(
-    new PointerEvent(type, {
-      button: 0,
-      pointerId: 1,
-      clientX,
-      clientY,
-      bubbles: true,
-    }),
-  );
-  flushSync();
 }
 
 beforeEach(() => {
@@ -257,9 +245,9 @@ describe("Note drag versus click", () => {
   });
 
   it("treats movement under the threshold as a click that selects the note", () => {
-    pointer("pointerdown", 100, 100);
-    pointer("pointermove", 103, 104); // 5px
-    pointer("pointerup", 103, 104);
+    pointer(note(), "pointerdown", 100, 100);
+    pointer(note(), "pointermove", 103, 104); // 5px
+    pointer(note(), "pointerup", 103, 104);
 
     vi.advanceTimersByTime(500); // the double-click window
     flushSync();
@@ -270,8 +258,8 @@ describe("Note drag versus click", () => {
   });
 
   it("lets a press on blank paper within the double-click window keep the note unselected", () => {
-    pointer("pointerdown", 100, 100);
-    pointer("pointerup", 100, 100);
+    pointer(note(), "pointerdown", 100, 100);
+    pointer(note(), "pointerup", 100, 100);
     const paper = document.querySelector<HTMLElement>("main.pane");
     if (paper === null) throw new Error("no pane rendered");
     paper.dispatchEvent(
@@ -301,11 +289,11 @@ describe("Note drag versus click", () => {
   it("edits on a double-click without selecting, so the panes keep still under the second click", () => {
     // selecting opens the detail pane, which on wide screens narrows the
     // priority pane and slides every note left mid-gesture
-    pointer("pointerdown", 100, 100);
-    pointer("pointerup", 100, 100);
+    pointer(note(), "pointerdown", 100, 100);
+    pointer(note(), "pointerup", 100, 100);
     expect(store.selectedId).toBeNull();
-    pointer("pointerdown", 100, 100);
-    pointer("pointerup", 100, 100);
+    pointer(note(), "pointerdown", 100, 100);
+    pointer(note(), "pointerup", 100, 100);
     note().dispatchEvent(new MouseEvent("dblclick", { bubbles: true }));
     vi.runAllTimers();
     flushSync();
@@ -318,13 +306,13 @@ describe("Note drag versus click", () => {
   it("keeps the panes still under the second click of a double-click paced at the OS default", () => {
     // browsers fire dblclick for two clicks within the OS double-click time:
     // 400ms by default on GNOME, 500ms on Windows
-    pointer("pointerdown", 100, 100);
-    pointer("pointerup", 100, 100);
+    pointer(note(), "pointerdown", 100, 100);
+    pointer(note(), "pointerup", 100, 100);
     vi.advanceTimersByTime(450);
     flushSync();
     expect(store.selectedId).toBeNull();
-    pointer("pointerdown", 100, 100);
-    pointer("pointerup", 100, 100);
+    pointer(note(), "pointerdown", 100, 100);
+    pointer(note(), "pointerup", 100, 100);
     note().dispatchEvent(new MouseEvent("dblclick", { bubbles: true }));
     vi.runAllTimers();
     flushSync();
@@ -334,16 +322,16 @@ describe("Note drag versus click", () => {
   });
 
   it("moves the note from the threshold on and commits once on release", () => {
-    pointer("pointerdown", 100, 100);
-    pointer("pointermove", 106, 100); // exactly 6px
+    pointer(note(), "pointerdown", 100, 100);
+    pointer(note(), "pointermove", 106, 100); // exactly 6px
     expect(task().x).toBeCloseTo(0.5 + 6 / PANE_W);
 
-    pointer("pointermove", 200, 150);
+    pointer(note(), "pointermove", 200, 150);
     expect(task().x).toBeCloseTo(0.6);
     expect(task().y).toBeCloseTo(0.6);
     expect(commit).not.toHaveBeenCalled(); // store.move does not persist
 
-    pointer("pointerup", 200, 150);
+    pointer(note(), "pointerup", 200, 150);
     vi.runAllTimers();
     flushSync();
 
@@ -353,17 +341,17 @@ describe("Note drag versus click", () => {
   });
 
   it("puts the note back and stops dragging when the browser cancels the pointer", () => {
-    pointer("pointerdown", 100, 100);
-    pointer("pointermove", 200, 150);
+    pointer(note(), "pointerdown", 100, 100);
+    pointer(note(), "pointermove", 200, 150);
     expect(note().classList.contains("dragging")).toBe(true);
 
-    pointer("pointercancel", 200, 150);
+    pointer(note(), "pointercancel", 200, 150);
     expect(note().classList.contains("dragging")).toBe(false);
     expect(task()).toMatchObject({ x: 0.5, y: 0.5 });
 
     // a hovering mouse or pen sends moves with no press behind them
-    pointer("pointermove", 400, 300);
-    pointer("pointerup", 400, 300);
+    pointer(note(), "pointermove", 400, 300);
+    pointer(note(), "pointerup", 400, 300);
     vi.runAllTimers();
     flushSync();
 
