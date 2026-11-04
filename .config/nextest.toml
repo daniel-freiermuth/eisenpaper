@@ -1,0 +1,12 @@
+# cargo-nextest: every test runs in its own process, so tests that touch env
+# vars, PATH, or the working directory cannot leak into one another.
+
+[profile.ci]
+# report every failure in one run instead of stopping at the first
+fail-fast = false
+# a test that flakes is a bug to fix, not to retry away
+retries = 0
+failure-output = "immediate-final"
+
+[profile.ci.junit]
+path = "junit.xml"
