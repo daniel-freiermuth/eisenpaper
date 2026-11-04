@@ -6,6 +6,7 @@ import { drag } from "./drag.svelte";
 import SchedulePane from "./SchedulePane.svelte";
 import { store } from "./sheet.svelte";
 import { today } from "./today.svelte";
+import { el } from "./test-dom";
 
 // SchedulePane is the real host: both its `.days` column and every day's
 // `.day-list` carry `data-autoscroll`, and which of them actually scrolls
@@ -15,12 +16,6 @@ let pane: Record<string, unknown>;
 
 /** the bottom-most visible day's scrap, sitting in `.days`' bottom edge band */
 const OVER = { x: 300, y: 580 };
-
-function el(selector: string): HTMLElement {
-  const found = document.querySelector<HTMLElement>(selector);
-  if (found === null) throw new Error(`no ${selector} rendered`);
-  return found;
-}
 
 function layout(
   target: HTMLElement,
