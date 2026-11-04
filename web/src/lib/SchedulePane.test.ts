@@ -15,6 +15,7 @@ import type { Task } from "./model";
 import { addDays, tasksOn } from "./schedule";
 import SchedulePane from "./SchedulePane.svelte";
 import { store } from "./sheet.svelte";
+import { pointer } from "./test-events";
 import { today } from "./today.svelte";
 import { buttonLabelled, el } from "./test-dom";
 
@@ -220,29 +221,18 @@ describe("ScheduleItem drop routing", () => {
     vi.spyOn(document, "elementFromPoint").mockImplementation(() => under);
   });
 
-  const pointer = (type: string, y: number): PointerEvent =>
-    new PointerEvent(type, {
-      clientX: 0,
-      clientY: y,
-      button: 0,
-      pointerType: "mouse",
-      bubbles: true,
-    });
-
   /**
    * Mouse-drags `id` and releases it over `target` at height `y`. happy-dom
    * lays every scrap out as a zero rect, so y < 0 is above all of them
    * (index 0) and y > 0 below all of them (index = the other scraps).
    */
   function dragOnto(id: string, target: HTMLElement, y: number): void {
-    el(`[data-id="${id}"]`).dispatchEvent(pointer("pointerdown", 0));
+    pointer(el(`[data-id="${id}"]`), "pointerdown", 0, 0);
     under = target;
-    dispatchEvent(pointer("pointermove", y)); // past the threshold: lift
-    dispatchEvent(pointer("pointermove", y)); // the lifted scrap follows
-    flushSync();
+    pointer(window, "pointermove", 0, y); // past the threshold: lift
+    pointer(window, "pointermove", 0, y); // the lifted scrap follows
     expect(drag.current?.id).toBe(id);
-    dispatchEvent(pointer("pointerup", y));
-    flushSync();
+    pointer(window, "pointerup", 0, y);
   }
 
   it("schedules onto a day at the index under the pointer", () => {
@@ -333,22 +323,10 @@ describe("SchedulePane paging", () => {
     const schedule = vi.spyOn(store, "schedule");
     let under: Element | null = null;
     vi.spyOn(document, "elementFromPoint").mockImplementation(() => under);
-    const pointer = (target: EventTarget, type: string, y: number): void => {
-      target.dispatchEvent(
-        new PointerEvent(type, {
-          clientX: 0,
-          clientY: y,
-          button: 0,
-          pointerType: "mouse",
-          bubbles: true,
-        }),
-      );
-      flushSync();
-    };
 
-    pointer(el('[data-id="a"]'), "pointerdown", 0);
+    pointer(el('[data-id="a"]'), "pointerdown", 0, 0);
     under = el('button[data-nav="7"]');
-    pointer(window, "pointermove", 20);
+    pointer(window, "pointermove", 0, 20);
     expect(drag.current?.nav).toBe("7");
 
     vi.advanceTimersByTime(650);
@@ -360,8 +338,8 @@ describe("SchedulePane paging", () => {
 
     const target = addDays(TODAY, 9);
     under = el(`[data-zone="${target}"]`);
-    pointer(window, "pointermove", 40);
-    pointer(window, "pointerup", 40);
+    pointer(window, "pointermove", 0, 40);
+    pointer(window, "pointerup", 0, 40);
 
     expect(drag.current).toBeNull();
     expect(schedule).toHaveBeenCalledExactlyOnceWith("a", target, 0);

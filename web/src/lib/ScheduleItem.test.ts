@@ -6,6 +6,7 @@ import { drag } from "./drag.svelte";
 import { addDays } from "./schedule";
 import SchedulePane from "./SchedulePane.svelte";
 import { store } from "./sheet.svelte";
+import { pointer } from "./test-events";
 import { today } from "./today.svelte";
 
 // SchedulePane is the real host: a behind-schedule scrap shows both the ✓ and the
@@ -24,20 +25,6 @@ function button(label: string): HTMLElement {
   );
   if (el === null) throw new Error(`no ${label} button rendered`);
   return el;
-}
-
-function pointer(el: HTMLElement, type: string, x: number, y: number): void {
-  el.dispatchEvent(
-    new PointerEvent(type, {
-      button: 0,
-      pointerId: 1,
-      pointerType: "mouse",
-      clientX: x,
-      clientY: y,
-      bubbles: true,
-    }),
-  );
-  flushSync();
 }
 
 beforeEach(() => {
