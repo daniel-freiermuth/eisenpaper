@@ -1153,6 +1153,29 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn if_none_match_naming_the_current_sheet_refuses_even_beside_if_match() {
+        let (app, data) = scratch_app("none-match");
+        fs::write(&data, version(1)).unwrap();
+        let current = tag_of(&call(&app, "GET", "/tasks.json", Vec::new()).await);
+        // RFC 9110 §13.2.2: If-None-Match is evaluated even when If-Match held
+        let req = Request::builder()
+            .method("PUT")
+            .uri("/tasks.json")
+            .header("if-match", &current)
+            .header("if-none-match", "*")
+            .body(Body::from(version(2)))
+            .unwrap();
+        let res = app.clone().oneshot(req).await.unwrap();
+        assert_eq!(res.status(), StatusCode::PRECONDITION_FAILED);
+        assert_eq!(fs::read(&data).unwrap(), version(1));
+        // and it compares weakly (§13.1.2): a weak tag still names the sheet
+        let weak = format!("W/{current}");
+        let res = put(&app, ("if-none-match", &weak), &version(2)).await;
+        assert_eq!(res.status(), StatusCode::PRECONDITION_FAILED);
+        assert_eq!(fs::read(&data).unwrap(), version(1));
+    }
+
+    #[tokio::test]
     async fn unreadable_sheet_is_a_marked_500_not_a_404() {
         let (app, data) = scratch_app("unreadable");
         // the sheet exists but cannot be read; a 404 would make the app overwrite it
