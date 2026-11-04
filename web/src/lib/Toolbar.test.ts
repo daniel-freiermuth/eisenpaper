@@ -13,6 +13,7 @@ import {
 
 import type { Sheet, Task } from "./model";
 import { store } from "./sheet.svelte";
+import { buttonLabelled } from "./test-dom";
 import Toolbar from "./Toolbar.svelte";
 
 let toolbar: Record<string, unknown>;
@@ -39,14 +40,6 @@ const imported: Sheet = {
   tasks: [scrap("in1", false), scrap("in2", true)],
   archive: [{ at: 5, tasks: [scrap("old1", true)] }],
 };
-
-function button(label: string): HTMLButtonElement {
-  const el = Array.from(document.querySelectorAll("button")).find(
-    (b) => b.textContent.trim() === label,
-  );
-  if (el === undefined) throw new Error(`no "${label}" button`);
-  return el;
-}
 
 function fileInput(): HTMLInputElement {
   const el = document.querySelector<HTMLInputElement>('input[type="file"]');
@@ -197,7 +190,7 @@ describe("Toolbar fresh sheet", () => {
       archive: [],
     };
 
-    button("fresh sheet").click();
+    buttonLabelled("fresh sheet").click();
 
     expect(alert).toHaveBeenCalledOnce();
     expect(confirm).not.toHaveBeenCalled();
@@ -218,7 +211,7 @@ describe("Toolbar fresh sheet", () => {
       archive: [],
     };
 
-    button("fresh sheet").click();
+    buttonLabelled("fresh sheet").click();
 
     expect(confirm).toHaveBeenCalledExactlyOnceWith(
       "start a fresh sheet? 2 crossed-out task(s) go to the old sheets, 3 stay.",
@@ -236,7 +229,7 @@ describe("Toolbar fresh sheet", () => {
   it("leaves tasks and archive untouched when the confirm is declined", () => {
     confirm.mockReturnValue(false);
 
-    button("fresh sheet").click();
+    buttonLabelled("fresh sheet").click();
 
     expect(confirm).toHaveBeenCalledOnce();
     expect(commit).not.toHaveBeenCalled();
@@ -268,7 +261,7 @@ describe("Toolbar export", () => {
       download = this.download;
     });
 
-    button("export").click();
+    buttonLabelled("export").click();
 
     expect(download).toBe("eisenpaper-2026-10-23.json");
   });
