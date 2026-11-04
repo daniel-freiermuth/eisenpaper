@@ -5,6 +5,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { drag } from "./drag.svelte";
 import SchedulePane from "./SchedulePane.svelte";
 import { store } from "./sheet.svelte";
+import { pointer } from "./test-events";
 import { today } from "./today.svelte";
 import { el } from "./test-dom";
 
@@ -37,27 +38,6 @@ function layout(
   });
   target.getBoundingClientRect = () =>
     DOMRect.fromRect({ x: 0, y: rect.top, width: 600, height });
-}
-
-function pointer(
-  target: EventTarget,
-  type: string,
-  x: number,
-  y: number,
-  init: PointerEventInit = {},
-) {
-  target.dispatchEvent(
-    new PointerEvent(type, {
-      button: 0,
-      pointerId: 1,
-      pointerType: "mouse",
-      clientX: x,
-      clientY: y,
-      bubbles: true,
-      ...init,
-    }),
-  );
-  flushSync();
 }
 
 /** Lifts the backlog scrap and holds it over the scheduled one. */
