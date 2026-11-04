@@ -206,31 +206,38 @@ fn etag(bytes: &[u8]) -> HeaderValue {
 }
 
 /// Whether a comma-separated entity-tag list names `current` (`*` names any
-/// existing sheet). Weak tags never match: `If-Match` compares strongly.
-fn names(list: &HeaderValue, current: Option<&HeaderValue>) -> bool {
+/// existing sheet). `If-Match` compares strongly, so a weak tag never
+/// matches; `If-None-Match` compares weakly, ignoring a tag's `W/` (ours,
+/// `current`, are never weak).
+fn names(list: &HeaderValue, current: Option<&HeaderValue>, weak: bool) -> bool {
     let Some(current) = current else {
         return false;
     };
     let Ok(list) = list.to_str() else {
         return false;
     };
-    list.split(',')
-        .map(str::trim)
-        .any(|tag| tag == "*" || tag.as_bytes() == current.as_bytes())
+    list.split(',').map(str::trim).any(|tag| {
+        let tag = if weak {
+            tag.strip_prefix("W/").unwrap_or(tag)
+        } else {
+            tag
+        };
+        tag == "*" || tag.as_bytes() == current.as_bytes()
+    })
 }
 
 /// Checks a PUT's preconditions against the current sheet's tag (`None` =
 /// no sheet), per RFC 9110 §13.2.2. A PUT without any is refused with 428
 /// (RFC 6585): that is a blind overwrite of whatever another device saved.
 fn precondition(headers: &HeaderMap, current: Option<&HeaderValue>) -> Result<(), StatusCode> {
-    let ok = if let Some(if_match) = headers.get(IF_MATCH) {
-        names(if_match, current)
-    } else if let Some(if_none_match) = headers.get(IF_NONE_MATCH) {
-        // weak comparison, but our tags are never weak: same test
-        !names(if_none_match, current)
-    } else {
+    let if_match = headers.get(IF_MATCH);
+    let if_none_match = headers.get(IF_NONE_MATCH);
+    if if_match.is_none() && if_none_match.is_none() {
         return Err(StatusCode::PRECONDITION_REQUIRED);
-    };
+    }
+    // both are evaluated when both are sent: If-Match first, then If-None-Match
+    let ok = if_match.is_none_or(|list| names(list, current, false))
+        && if_none_match.is_none_or(|list| !names(list, current, true));
     if ok {
         Ok(())
     } else {
