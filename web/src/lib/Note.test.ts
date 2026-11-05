@@ -284,6 +284,23 @@ describe("Note drag versus click", () => {
     expect(store.selectedId).toBeNull();
   });
 
+  it("drops a click's pending select when a drag starts within the double-click window", () => {
+    // selecting opens the detail pane, which on wide screens narrows the
+    // priority pane mid-drag and drops the note away from the pointer
+    pointer("pointerdown", 100, 100);
+    pointer("pointerup", 100, 100);
+    pointer("pointerdown", 100, 100);
+    pointer("pointermove", 160, 100); // a drag
+    vi.advanceTimersByTime(500); // the click's double-click window ends
+    flushSync();
+
+    expect(store.selectedId).toBeNull();
+    pointer("pointerup", 160, 100);
+    vi.runAllTimers();
+    flushSync();
+    expect(store.selectedId).toBeNull();
+  });
+
   it("crosses out with ✓ without selecting or dragging the note", () => {
     const check = note().querySelector<HTMLButtonElement>("button.check");
     if (check === null) throw new Error("no ✓ button");

@@ -75,8 +75,13 @@
       Math.hypot(e.clientX - press.x, e.clientY - press.y) < DRAG_THRESHOLD_PX
     )
       return;
-    press.moved = true;
-    dragging = true;
+    if (!press.moved) {
+      // a select from an earlier click would open the detail pane mid-drag,
+      // narrowing this pane and dropping the note away from the pointer
+      store.cancelSelect();
+      press.moved = true;
+      dragging = true;
+    }
     store.move(
       task,
       press.taskX + (e.clientX - press.x) / press.paneW,
