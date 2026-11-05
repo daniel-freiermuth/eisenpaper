@@ -97,10 +97,15 @@
   }
 
   // the browser took the pointer (a scroll, a palm, a system gesture): no
-  // pointerup follows, so abort the drag and put the note back unsaved
+  // pointerup follows, so abort the drag and put the note back. A save or
+  // pull landing mid-drag may have cached or pushed the live position, so
+  // commit the note back too; with nothing stored mid-drag it saves nothing
   function onpointercancel(): void {
     if (press === null) return;
-    if (press.moved) store.move(task, press.taskX, press.taskY);
+    if (press.moved) {
+      store.move(task, press.taskX, press.taskY);
+      store.commit();
+    }
     press = null;
     dragging = false;
   }
