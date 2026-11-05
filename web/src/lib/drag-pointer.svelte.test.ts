@@ -10,6 +10,7 @@ import {
 } from "vitest";
 
 import { drag, draggable } from "./drag.svelte";
+import { pointer } from "./test-events";
 
 // happy-dom has no layout, so every rectangle and hit test below is stubbed.
 // The zone holds four scraps 40px tall, 100px apart; "me" is the one being
@@ -66,18 +67,7 @@ function fire(
   clientY: number,
   init: PointerEventInit = {},
 ): void {
-  el.dispatchEvent(
-    new PointerEvent(type, {
-      button: 0,
-      pointerId: 1,
-      pointerType: "mouse",
-      clientX,
-      clientY,
-      bubbles: true,
-      cancelable: true,
-      ...init,
-    }),
-  );
+  pointer(el, type, clientX, clientY, { cancelable: true, ...init });
 }
 
 const touch: PointerEventInit = { pointerType: "touch" };

@@ -5,6 +5,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { drag } from "./drag.svelte";
 import SchedulePane from "./SchedulePane.svelte";
 import { store } from "./sheet.svelte";
+import { el, pointer } from "./test-events";
 import { today } from "./today.svelte";
 
 // SchedulePane is the real host: both its `.days` column and every day's
@@ -15,12 +16,6 @@ let pane: Record<string, unknown>;
 
 /** the bottom-most visible day's scrap, sitting in `.days`' bottom edge band */
 const OVER = { x: 300, y: 580 };
-
-function el(selector: string): HTMLElement {
-  const found = document.querySelector<HTMLElement>(selector);
-  if (found === null) throw new Error(`no ${selector} rendered`);
-  return found;
-}
 
 function layout(
   target: HTMLElement,
@@ -42,27 +37,6 @@ function layout(
   });
   target.getBoundingClientRect = () =>
     DOMRect.fromRect({ x: 0, y: rect.top, width: 600, height });
-}
-
-function pointer(
-  target: EventTarget,
-  type: string,
-  x: number,
-  y: number,
-  init: PointerEventInit = {},
-) {
-  target.dispatchEvent(
-    new PointerEvent(type, {
-      button: 0,
-      pointerId: 1,
-      pointerType: "mouse",
-      clientX: x,
-      clientY: y,
-      bubbles: true,
-      ...init,
-    }),
-  );
-  flushSync();
 }
 
 /** Lifts the backlog scrap and holds it over the scheduled one. */
