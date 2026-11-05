@@ -6,7 +6,9 @@
   }
   let { open = $bindable(false) }: Props = $props();
 
-  const newestFirst = $derived(store.sheet.archive.toReversed());
+  const newestFirst = $derived(
+    store.sheet.archive.toSorted((a, b) => b.at - a.at),
+  );
 </script>
 
 <aside class:open aria-hidden={!open} inert={!open}>
