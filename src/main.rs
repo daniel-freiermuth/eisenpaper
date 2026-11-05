@@ -155,6 +155,10 @@ fn content_type(path: &Path) -> &'static str {
 }
 
 /// Serves a static file, following symlinks only if they stay inside `web`.
+///
+/// Only a missing file or a directory is a 404: any other read failure (a
+/// permission or I/O error on a deployed file) is logged and a 500, so it
+/// is not mistaken for a file that was never built.
 fn serve_static(web: &Path, url_path: &str) -> Response {
     let Some(path) = resolve_static(web, url_path) else {
         return StatusCode::NOT_FOUND.into_response();
@@ -166,8 +170,20 @@ fn serve_static(web: &Path, url_path: &str) -> Response {
     if !inside {
         return StatusCode::NOT_FOUND.into_response();
     }
-    let Ok(data) = fs::read(&path) else {
-        return StatusCode::NOT_FOUND.into_response();
+    let data = match fs::read(&path) {
+        Ok(data) => data,
+        Err(e)
+            if matches!(
+                e.kind(),
+                io::ErrorKind::NotFound | io::ErrorKind::IsADirectory
+            ) =>
+        {
+            return StatusCode::NOT_FOUND.into_response();
+        }
+        Err(e) => {
+            eprintln!("reading {} failed: {e}", path.display());
+            return StatusCode::INTERNAL_SERVER_ERROR.into_response();
+        }
     };
     // Vite fingerprints everything under /assets/, so it can be cached forever
     let cache = if url_path.starts_with("/assets/") {
@@ -871,6 +887,33 @@ mod tests {
         assert_eq!(
             serve_static(&web, "/leak.txt").status(),
             StatusCode::NOT_FOUND
+        );
+    }
+
+    #[test]
+    fn serve_static_fails_loudly_on_unreadable_file() {
+        use std::os::unix::fs::PermissionsExt;
+        let dir = scratch("unreadable");
+        let web = dir.join("web");
+        fs::create_dir_all(web.join("assets")).unwrap();
+        // missing files and directories are not errors, just nothing to serve
+        for uri in ["/missing.js", "/assets"] {
+            assert_eq!(
+                serve_static(&web, uri).status(),
+                StatusCode::NOT_FOUND,
+                "{uri}"
+            );
+        }
+        // a deployed file the server cannot read is a broken deploy, not a 404
+        let index = web.join("index.html");
+        fs::write(&index, "<!doctype html>").unwrap();
+        fs::set_permissions(&index, fs::Permissions::from_mode(0o000)).unwrap();
+        if fs::read(&index).is_ok() {
+            return; // root reads it anyway: there is no read error to provoke
+        }
+        assert_eq!(
+            serve_static(&web, "/").status(),
+            StatusCode::INTERNAL_SERVER_ERROR
         );
     }
 
