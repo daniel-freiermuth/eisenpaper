@@ -131,6 +131,24 @@ async function loadStore() {
   return (await import("./sheet.svelte")).store;
 }
 
+/** A fresh store that has synced once against `tasks`. */
+async function storeSyncedWith(tasks: ReturnType<typeof fakeServer>) {
+  const store = await loadStore();
+  fetchMock.mockImplementation(tasks.handle);
+  await store.sync();
+  return store;
+}
+
+/** `tasks` is reachable again: drop any stubbed failure and sync. */
+async function resync(
+  store: Awaited<ReturnType<typeof loadStore>>,
+  tasks: ReturnType<typeof fakeServer>,
+) {
+  fetchMock.mockReset();
+  fetchMock.mockImplementation(tasks.handle);
+  await store.sync();
+}
+
 beforeEach(() => {
   vi.useFakeTimers();
   storage = new Map<string, string>();
@@ -155,9 +173,7 @@ afterEach(() => {
 describe("SheetStore.sync", () => {
   it("pushes an edit whose save failed offline once the server is back", async () => {
     const tasks = fakeServer(serverText);
-    const store = await loadStore();
-    fetchMock.mockImplementation(tasks.handle);
-    await store.sync();
+    const store = await storeSyncedWith(tasks);
     expect(store.status).toBe("synced");
 
     fetchMock.mockRejectedValue(new TypeError("network down"));
@@ -167,9 +183,7 @@ describe("SheetStore.sync", () => {
     await vi.advanceTimersByTimeAsync(300);
     expect(store.status).toBe("offline");
 
-    fetchMock.mockReset();
-    fetchMock.mockImplementation(tasks.handle);
-    await store.sync();
+    await resync(store, tasks);
 
     expect(putBodies()).toMatchObject([{ tasks: [{ id: "t1", done: true }] }]);
     expect(store.status).toBe("synced");
@@ -177,18 +191,14 @@ describe("SheetStore.sync", () => {
 
   it("retries a push that the server rejected", async () => {
     const tasks = fakeServer(serverText);
-    const store = await loadStore();
-    fetchMock.mockImplementation(tasks.handle);
-    await store.sync();
+    const store = await storeSyncedWith(tasks);
     store.replace({ tasks: [], archive: [] });
     fetchMock.mockReset();
     fetchMock.mockImplementation(server(500));
     await store.sync();
     expect(store.status).toBe("error");
 
-    fetchMock.mockReset();
-    fetchMock.mockImplementation(tasks.handle);
-    await store.sync();
+    await resync(store, tasks);
 
     expect(putBodies()).toMatchObject([{ tasks: [] }]);
     expect(tasks.sheet()).toMatchObject({ tasks: [] });
@@ -238,9 +248,7 @@ describe("SheetStore.sync", () => {
   it("creates tasks.json from the local sheet when the server has none", async () => {
     storage.set(CACHE_KEY, localText);
     const tasks = fakeServer(null);
-    const store = await loadStore();
-    fetchMock.mockImplementation(tasks.handle);
-    await store.sync();
+    const store = await storeSyncedWith(tasks);
 
     expect(puts().map(([, init]) => init?.body)).toEqual([localText]);
     expect(tasks.sheet()).toEqual(JSON.parse(localText));
@@ -315,9 +323,7 @@ describe("SheetStore.sync", () => {
     expect(store.status).toBe("error");
 
     // once tasks.json is readable again the edit is merged into it
-    fetchMock.mockReset();
-    fetchMock.mockImplementation(tasks.handle);
-    await store.sync();
+    await resync(store, tasks);
 
     expect(tasks.sheet()).toMatchObject({
       tasks: [{ id: "t1" }, { id: "t2", done: true }],
@@ -332,9 +338,7 @@ describe("SheetStore.sync", () => {
     storage.set(CACHE_KEY, bad);
     storage.set(BASE_KEY, bad);
     const tasks = fakeServer(bad);
-    const store = await loadStore();
-    fetchMock.mockImplementation(tasks.handle);
-    await store.sync();
+    const store = await storeSyncedWith(tasks);
     await vi.advanceTimersByTimeAsync(300);
 
     expect(tasks.sheet()).toEqual(JSON.parse(bad));
@@ -359,9 +363,7 @@ describe("SheetStore.sync", () => {
     storage.set(CACHE_KEY, localText); // t2 added here...
     storage.set(BASE_KEY, emptyText);
     const tasks = fakeServer(serverText); // ...t1 added elsewhere
-    const store = await loadStore();
-    fetchMock.mockImplementation(tasks.handle);
-    await store.sync();
+    const store = await storeSyncedWith(tasks);
 
     expect(tasks.sheet()).toMatchObject({
       tasks: [{ id: "t1" }, { id: "t2" }],
@@ -377,9 +379,7 @@ describe("SheetStore.sync", () => {
 
   it("merges another device's save instead of overwriting it", async () => {
     const tasks = fakeServer(serverText);
-    const store = await loadStore(); // the desktop
-    fetchMock.mockImplementation(tasks.handle);
-    await store.sync();
+    const store = await storeSyncedWith(tasks); // the desktop
 
     // the phone adds a task; the focused desktop never pulls it
     const phoneTask = { ...serverTask, id: "phone", text: "buy milk" };
@@ -402,9 +402,7 @@ describe("SheetStore.sync", () => {
   /** The desktop has synced; then the phone adds a task, unseen here. */
   async function conflictedStore() {
     const tasks = fakeServer(serverText);
-    const store = await loadStore();
-    fetchMock.mockImplementation(tasks.handle);
-    await store.sync();
+    const store = await storeSyncedWith(tasks);
     const phoneTask = { ...serverTask, id: "phone", text: "buy milk" };
     tasks.save({ tasks: [serverTask, phoneTask], archive: [] });
     return { store, tasks };
@@ -489,9 +487,7 @@ describe("SheetStore.sync", () => {
 
   it("keeps offline edits across a reload when another device saved since", async () => {
     const tasks = fakeServer(serverText);
-    let store = await loadStore(); // the phone
-    fetchMock.mockImplementation(tasks.handle);
-    await store.sync();
+    let store = await storeSyncedWith(tasks); // the phone
 
     fetchMock.mockRejectedValue(new TypeError("network down"));
     const task = store.sheet.tasks[0];
@@ -504,9 +500,7 @@ describe("SheetStore.sync", () => {
     const desktopTask = { ...serverTask, id: "desk", text: "renew passport" };
     tasks.save({ tasks: [serverTask, desktopTask], archive: [] });
     store = await loadStore();
-    fetchMock.mockReset();
-    fetchMock.mockImplementation(tasks.handle);
-    await store.sync();
+    await resync(store, tasks);
 
     expect(tasks.sheet()).toMatchObject({
       tasks: [{ id: "t1", done: true }, { id: "desk" }],
@@ -516,9 +510,7 @@ describe("SheetStore.sync", () => {
 
   it("does not bring back a task another device deleted", async () => {
     const tasks = fakeServer(serverText);
-    const store = await loadStore();
-    fetchMock.mockImplementation(tasks.handle);
-    await store.sync();
+    const store = await storeSyncedWith(tasks);
 
     tasks.save({ tasks: [], archive: [] }); // deleted on the phone
     store.addDraft(0.2, 0.2);
@@ -544,9 +536,7 @@ describe("SheetStore.sync", () => {
       savedAt: 100,
     };
     const tasks = fakeServer(JSON.stringify(desktop, null, 2));
-    const store = await loadStore();
-    fetchMock.mockImplementation(tasks.handle);
-    await store.sync();
+    const store = await storeSyncedWith(tasks);
 
     expect(tasks.sheet()).toEqual(desktop);
     expect(JSON.parse(store.exportText())).toEqual(desktop);
@@ -570,9 +560,7 @@ describe("SheetStore.sync", () => {
         2,
       ),
     );
-    const store = await loadStore();
-    fetchMock.mockImplementation(tasks.handle);
-    await store.sync();
+    const store = await storeSyncedWith(tasks);
 
     expect(tasks.sheet()).toMatchObject({
       tasks: [{ id: "t1", done: true }, { id: "desk" }],
@@ -590,9 +578,7 @@ describe("SheetStore.sync", () => {
     const tasks = fakeServer(
       JSON.stringify({ ...serverSheet, savedAt: 200 }, null, 2),
     );
-    const store = await loadStore();
-    fetchMock.mockImplementation(tasks.handle);
-    await store.sync();
+    const store = await storeSyncedWith(tasks);
 
     expect(tasks.sheet()).toMatchObject({
       tasks: [{ id: "t1" }, { id: "t2" }],
@@ -616,9 +602,7 @@ describe("SheetStore.sync", () => {
       JSON.stringify({ ...serverSheet, savedAt: 100 }, null, 2),
     );
     store = await loadStore();
-    fetchMock.mockReset();
-    fetchMock.mockImplementation(tasks.handle);
-    await store.sync();
+    await resync(store, tasks);
 
     expect(tasks.sheet()).toMatchObject({
       tasks: [{ id: "t1" }, { id: "imported" }],
@@ -682,9 +666,7 @@ describe("SheetStore.sync", () => {
     store.finishEdit(draft, "buy milk");
     await vi.advanceTimersByTimeAsync(300);
 
-    fetchMock.mockReset();
-    fetchMock.mockImplementation(tasks.handle);
-    await store.sync();
+    await resync(store, tasks);
     await vi.advanceTimersByTimeAsync(300);
 
     expect(tasks.sheet()).toMatchObject({
@@ -805,9 +787,7 @@ describe("SheetStore without a usable localStorage", () => {
       removeItem: (k: string) => storage.delete(k),
     });
     const tasks = fakeServer(serverText);
-    fetchMock.mockImplementation(tasks.handle);
-    const store = await loadStore();
-    await store.sync();
+    const store = await storeSyncedWith(tasks);
 
     // another device adds a task; this tab adopts it but can't cache it
     const added: Task = { ...serverTask, id: "t3", text: "water plants" };
@@ -836,9 +816,7 @@ describe("SheetStore without a usable localStorage", () => {
       removeItem: (k: string) => storage.delete(k),
     });
     const tasks = fakeServer(serverText);
-    fetchMock.mockImplementation(tasks.handle);
-    const store = await loadStore();
-    await store.sync();
+    const store = await storeSyncedWith(tasks);
 
     // this tab adds a note and saves it, but only the sheet can be cached,
     // not the tasks.json it now descends from
@@ -900,9 +878,7 @@ describe("SheetStore.commit", () => {
 
   it("saves again when the sheet changed back while a PUT was in flight", async () => {
     const tasks = fakeServer(serverText);
-    const store = await loadStore();
-    fetchMock.mockImplementation(tasks.handle);
-    await store.sync();
+    const store = await storeSyncedWith(tasks);
     // hold the next PUT on a slow link until released
     let release = (): void => undefined;
     fetchMock.mockImplementationOnce(
@@ -929,9 +905,7 @@ describe("SheetStore.commit", () => {
 
   it("saves no drag position while the drag goes on, even as PUTs land", async () => {
     const tasks = fakeServer(serverText);
-    const store = await loadStore();
-    fetchMock.mockImplementation(tasks.handle);
-    await store.sync();
+    const store = await storeSyncedWith(tasks);
     // every PUT waits on a slow link until released
     const held: (() => void)[] = [];
     fetchMock.mockImplementation((url, init) =>
@@ -988,9 +962,7 @@ describe("SheetStore.commit", () => {
 
   it("saves the newest edit when an earlier save lands first but is answered last", async () => {
     const tasks = fakeServer(serverText);
-    const store = await loadStore();
-    fetchMock.mockImplementation(tasks.handle);
-    await store.sync();
+    const store = await storeSyncedWith(tasks);
     // tasks.json takes each request at once, but its answers are held
     const held: { put: boolean; answer: () => void }[] = [];
     fetchMock.mockImplementation(
@@ -1071,9 +1043,7 @@ describe("SheetStore.replace", () => {
 
   it("keeps the import over the synced sheet when merging another device's save", async () => {
     const tasks = fakeServer(serverText);
-    const store = await loadStore();
-    fetchMock.mockImplementation(tasks.handle);
-    await store.sync();
+    const store = await storeSyncedWith(tasks);
     fetchMock.mockClear();
 
     store.replace(structuredClone(imported));
