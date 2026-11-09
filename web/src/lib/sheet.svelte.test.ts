@@ -614,6 +614,42 @@ describe("SheetStore.sync", () => {
     expect(store.status).toBe("synced");
   });
 
+  it("takes an import over a cache from before the base kept once it matched tasks.json", async () => {
+    // the phone's cache from before BASE_KEY is exactly tasks.json
+    const plumber = { ...serverTask, id: "t2", text: "call the plumber" };
+    const text = JSON.stringify(
+      { tasks: [serverTask, plumber], archive: [], savedAt: 100 },
+      null,
+      2,
+    );
+    storage.set(CACHE_KEY, text);
+    const tasks = fakeServer(text);
+    let store = await loadStore();
+    fetchMock.mockImplementation(tasks.handle);
+    await store.sync();
+    expect(puts()).toHaveLength(0);
+    expect(store.status).toBe("synced");
+
+    // the desktop imports a backup without savedAt, dropping t2
+    tasks.save({ tasks: [serverTask], archive: [] });
+    await store.sync();
+    expect(store.sheet.tasks.map((t) => t.id)).toEqual(["t1"]);
+    expect(puts()).toHaveLength(0);
+
+    // the same after a reload in between
+    storage.set(CACHE_KEY, text);
+    storage.delete(BASE_KEY);
+    tasks.save(JSON.parse(text) as Sheet);
+    store = await loadStore();
+    await store.sync();
+    store = await loadStore();
+    tasks.save({ tasks: [serverTask], archive: [] });
+    await store.sync();
+    expect(store.sheet.tasks.map((t) => t.id)).toEqual(["t1"]);
+    expect(tasks.sheet()).toEqual({ tasks: [serverTask], archive: [] });
+    expect(puts()).toHaveLength(0);
+  });
+
   it("keeps a backup imported before the first sync across a reload", async () => {
     // a new phone, offline: the backup, exported from a sheet the app
     // before the base was kept stamped, carries that sheet's savedAt
