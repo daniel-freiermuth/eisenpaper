@@ -75,3 +75,49 @@ describe("DetailPane quick days", () => {
     expect(commit).toHaveBeenCalledOnce();
   });
 });
+
+describe("DetailPane day field", () => {
+  it("shows the kept day again when the typed day is refused", () => {
+    const input = document.querySelector<HTMLInputElement>("#detail-day");
+    if (input === null) throw new Error("no day field");
+    // a browser keeps a typed five-digit year (the spec allows years past
+    // 9999); happy-dom's sanitizer would turn it into "" instead
+    let raw = "20266-10-25";
+    Object.defineProperty(input, "value", {
+      configurable: true,
+      get: () => raw,
+      set: (v: string) => {
+        raw = v;
+      },
+    });
+
+    input.dispatchEvent(new Event("change", { bubbles: true }));
+    flushSync();
+
+    expect(store.sheet.tasks.find((t) => t.id === "a")?.day).toBe(today.value);
+    expect(commit).not.toHaveBeenCalled();
+    expect(input.value).toBe(today.value);
+  });
+
+  it("leaves the field alone when a cleared part of the day empties it", () => {
+    const input = document.querySelector<HTMLInputElement>("#detail-day");
+    if (input === null) throw new Error("no day field");
+    // Chromium reports "" once one part (month, day, year) is cleared, and
+    // writing "" back wipes the parts the user is still about to complete;
+    // happy-dom has no parts, so record the writes instead
+    const writes: string[] = [];
+    Object.defineProperty(input, "value", {
+      configurable: true,
+      get: () => "",
+      set: (v: string) => {
+        writes.push(v);
+      },
+    });
+
+    input.dispatchEvent(new Event("change", { bubbles: true }));
+    flushSync();
+
+    expect(store.sheet.tasks.find((t) => t.id === "a")?.day).toBeUndefined();
+    expect(writes).toEqual([]);
+  });
+});
