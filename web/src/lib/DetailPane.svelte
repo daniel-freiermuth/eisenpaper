@@ -126,8 +126,13 @@
           min={today.value}
           value={task.day ?? ""}
           onchange={(e) => {
-            const day = e.currentTarget.value;
-            scheduleOn(day === "" ? null : day);
+            const input = e.currentTarget;
+            scheduleOn(input.value === "" ? null : input.value);
+            // show the day that was kept: the store ignores one it refuses.
+            // Only then: writing "" over a date with one part cleared would
+            // wipe the parts still filled in (Chromium)
+            const kept = task.day ?? "";
+            if (input.value !== kept) input.value = kept;
           }}
         />
       </div>
