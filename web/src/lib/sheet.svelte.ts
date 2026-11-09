@@ -119,8 +119,11 @@ class SheetStore {
   /** the selected task, gone once it leaves the sheet */
   selected = $derived(this.sheet.tasks.find((t) => t.id === this.selectedId));
 
-  /** the cache, if the app wrote it before BASE_KEY existed: see legacyCache */
-  readonly #legacyCache = legacyCache();
+  /**
+   * the cache, if the app wrote it before BASE_KEY existed: see legacyCache;
+   * null once tasks.json is seen to match it, so it holds no failed saves
+   */
+  #legacyCache = legacyCache();
   /**
    * tasks.json as last seen on the server, or a cache from before BASE_KEY
    * standing in for it; null = never seen, or none there. A cache we can't
@@ -297,6 +300,11 @@ class SheetStore {
       // server unchanged since our last sync: push any local edits whose
       // save failed (#write reports "synced" when there are none)
       this.#etag = res.headers.get("etag");
+      if (base === this.#legacyCache) {
+        // the cache is tasks.json after all: keep it as the base from now on
+        this.#legacyCache = null;
+        this.#persist();
+      }
       await this.#write(retries);
       return;
     }
