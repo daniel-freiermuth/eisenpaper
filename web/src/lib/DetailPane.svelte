@@ -1,7 +1,7 @@
 <script lang="ts">
   import { drag } from "./drag.svelte";
   import { tintStyle } from "./tint";
-  import { addDays, dueLabel } from "./schedule";
+  import { addDays, scheduleLabel } from "./schedule";
   import { store } from "./sheet.svelte";
   import { today } from "./today.svelte";
 
@@ -99,7 +99,7 @@
         <small
           >{task.day === undefined
             ? "in the backlog"
-            : dueLabel(task.day, today.value)}</small
+            : scheduleLabel(task.day, today.value)}</small
         >
       </h3>
       <div class="row">

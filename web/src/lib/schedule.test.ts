@@ -4,10 +4,10 @@ import { parseSheet, type Task } from "./model";
 import {
   addDays,
   backlog,
+  behindSchedule,
   dayHeading,
-  dueLabel,
-  overdue,
   placeTask,
+  scheduleLabel,
   tasksOn,
 } from "./schedule";
 
@@ -51,7 +51,7 @@ describe("backlog", () => {
   });
 });
 
-describe("overdue", () => {
+describe("behindSchedule", () => {
   const today = "2026-10-17";
   it("holds open tasks from past days only, oldest first", () => {
     const tasks = [
@@ -61,7 +61,10 @@ describe("overdue", () => {
       task("today", { day: today }),
       task("unscheduled"),
     ];
-    expect(ids(overdue(tasks, today))).toEqual(["lastweek", "yesterday"]);
+    expect(ids(behindSchedule(tasks, today))).toEqual([
+      "lastweek",
+      "yesterday",
+    ]);
   });
   it("orders tasks sharing a past day by order, then created", () => {
     const day = "2026-10-16";
@@ -71,7 +74,7 @@ describe("overdue", () => {
       task("loose-early", { day, created: 2 }),
       task("first", { day, order: 0 }),
     ];
-    expect(ids(overdue(tasks, today))).toEqual([
+    expect(ids(behindSchedule(tasks, today))).toEqual([
       "first",
       "second",
       "loose-early",
@@ -173,7 +176,7 @@ describe("placeTask", () => {
   });
 });
 
-describe("dueLabel", () => {
+describe("scheduleLabel", () => {
   const today = "2026-10-17"; // a Saturday
   it.each([
     ["2026-10-17", "today"],
@@ -183,7 +186,7 @@ describe("dueLabel", () => {
     ["2026-10-14", "Wed 14 Oct"],
     ["2027-01-05", "Tue, 5 Jan 2027"],
   ])("%s → %s", (day, label) => {
-    expect(dueLabel(day, today)).toBe(label);
+    expect(scheduleLabel(day, today)).toBe(label);
   });
 });
 

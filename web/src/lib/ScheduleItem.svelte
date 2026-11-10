@@ -6,7 +6,7 @@
 
   interface Props {
     task: Task;
-    /** shown after the text, e.g. the day an overdue task was due */
+    /** shown after the text, e.g. the day a behind-schedule task was planned */
     label?: string | undefined;
     /** offer a button that sends the task back to the backlog */
     unschedulable?: boolean;
@@ -25,7 +25,7 @@
   };
 
   function onDrop(zone: string, index: number): void {
-    if (zone === "overdue") return; // past days are not a target
+    if (zone === "behind") return; // past days are not a target
     store.schedule(task.id, zone === "backlog" ? null : zone, index);
   }
 
@@ -154,7 +154,7 @@
     color: var(--muted);
   }
 
-  /* see Note.svelte: on a tint the overdue date is a red chip */
+  /* see Note.svelte: on a tint the behind-schedule date is a red chip */
   .tinted .when {
     padding: 0 4px;
     border-radius: 3px;

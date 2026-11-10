@@ -39,7 +39,7 @@ const scrap = (id: string, over: Partial<Task> = {}): Task => ({
   ...over,
 });
 
-/** a, b, c on today; x on tomorrow; one overdue; two open + one done in the backlog. */
+/** a, b, c on today; x on tomorrow; one behind schedule; two open + one done in the backlog. */
 const sheet = (): Task[] => [
   scrap("a", { day: TODAY, order: 0 }),
   scrap("b", { day: TODAY, order: 1 }),
@@ -200,11 +200,11 @@ describe("TaskList drop slot", () => {
     expect(layout(TOMORROW)).toEqual(["x"]);
   });
 
-  it("never draws a slot in the unordered backlog or overdue lists", () => {
+  it("never draws a slot in the unordered backlog or behind-schedule lists", () => {
     lift("a", "backlog", 0);
     expect(layout("backlog")).toEqual(["open1", "open2", "gone"]);
-    lift("a", "overdue", 0);
-    expect(layout("overdue")).toEqual(["late"]);
+    lift("a", "behind", 0);
+    expect(layout("behind")).toEqual(["late"]);
   });
 
   it("shows the backlog's empty message once its only scrap is lifted", () => {
@@ -273,8 +273,8 @@ describe("ScheduleItem drop routing", () => {
     expect(store.sheet.tasks.find((t) => t.id === "a")?.day).toBeUndefined();
   });
 
-  it("ignores a drop on the overdue list", () => {
-    dragOnto("a", el('[data-zone="overdue"]'), 10);
+  it("ignores a drop on the behind-schedule list", () => {
+    dragOnto("a", el('[data-zone="behind"]'), 10);
     expect(schedule).not.toHaveBeenCalled();
     expect(commit).not.toHaveBeenCalled();
     expect(dayIds(TODAY)).toEqual(["a", "b", "c"]);

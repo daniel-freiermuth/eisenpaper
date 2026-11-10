@@ -21,8 +21,8 @@ on your phone over the LAN, and keeps working offline.
 - **Priorities** — the classic urgent × important matrix. Double-click
   anywhere to jot a task where it belongs; drag it as priorities change.
 - **Schedule** — a week view next to a backlog sorted most urgent and
-  important first. Drag tasks onto days, reorder them within a day; overdue
-  tasks are collected at the top of the backlog.
+  important first. Drag tasks onto days, reorder them within a day; tasks
+  past their scheduled day are collected at the top of the backlog.
 - **Task details** — click a task to open a side pane: assign a project,
   schedule it (today, tomorrow, next week, any date, or back to the
   backlog), and keep free-text notes.
@@ -52,13 +52,13 @@ on your phone over the LAN, and keeps working offline.
 
 ### Schedule
 
-| Action              | Mouse                                           | Touch                 | Keyboard |
-| ------------------- | ----------------------------------------------- | --------------------- | -------- |
-| open details        | click                                           | tap                   | `Enter`  |
-| cross out           | hover, click **✓**                              | tap, then **✓**       | `Space`  |
-| schedule / reorder  | drag onto a day                                 | long-press, then drag |          |
-| back to the backlog | drag onto the backlog, or **×** when overdue    | same                  |          |
-| turn the page       | **‹ ›** **« »**, or hold a dragged task on them | same                  |          |
+| Action              | Mouse                                                | Touch                 | Keyboard |
+| ------------------- | ---------------------------------------------------- | --------------------- | -------- |
+| open details        | click                                                | tap                   | `Enter`  |
+| cross out           | hover, click **✓**                                   | tap, then **✓**       | `Space`  |
+| schedule / reorder  | drag onto a day                                      | long-press, then drag |          |
+| back to the backlog | drag onto the backlog, or **×** when behind schedule | same                  |          |
+| turn the page       | **‹ ›** **« »**, or hold a dragged task on them      | same                  |          |
 
 ## Running
 
@@ -158,7 +158,7 @@ just fix      # apply automatic lint fixes, then format
 | `web/src/lib/`                | the Svelte 5 app; its core lives in four modules:            |
 | `web/src/lib/model.ts`        | sheet schema (valibot), parsing, archive ritual              |
 | `web/src/lib/sheet.svelte.ts` | the store: every change, sync with the server, offline cache |
-| `web/src/lib/schedule.ts`     | days, backlog order, overdue, placing tasks on days          |
+| `web/src/lib/schedule.ts`     | days, backlog order, behind schedule, placing tasks on days  |
 | `web/src/lib/tint.ts`         | project colours → readable text and selection colours        |
 
 ## License

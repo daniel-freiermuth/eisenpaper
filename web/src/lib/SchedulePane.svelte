@@ -6,9 +6,9 @@
   import {
     addDays,
     backlog,
+    behindSchedule,
     dayHeading,
-    dueLabel,
-    overdue,
+    scheduleLabel,
     tasksOn,
   } from "./schedule";
   import { store } from "./sheet.svelte";
@@ -24,16 +24,16 @@
   /** phone only: the backlog tray is pulled up */
   let trayOpen = $state(false);
   let scroller: HTMLElement | undefined = $state();
-  let overdueEl: HTMLElement | undefined = $state();
-  /** overdue scraps are scrolled out of view above the backlog */
-  let overdueHidden = $state(false);
+  let behindEl: HTMLElement | undefined = $state();
+  /** behind-schedule scraps are scrolled out of view above the backlog */
+  let behindHidden = $state(false);
 
   const days = $derived(
     Array.from({ length: WINDOW_DAYS }, (_, i) =>
       addDays(today.value, offset + i),
     ),
   );
-  const late = $derived(overdue(store.sheet.tasks, today.value));
+  const late = $derived(behindSchedule(store.sheet.tasks, today.value));
   const waiting = $derived(backlog(store.sheet.tasks));
   const range = $derived.by(() => {
     const first = dayHeading(days[0] ?? today.value, today.value).date;
@@ -50,18 +50,18 @@
     page(Number(e.currentTarget.dataset["nav"]));
   }
 
-  /** Overdue sits above the backlog: start scrolled just past it. */
+  /** Behind schedule sits above the backlog: start scrolled just past it. */
   async function showBacklog(): Promise<void> {
     await tick();
     if (scroller === undefined) return;
-    scroller.scrollTop = overdueEl?.offsetHeight ?? 0;
+    scroller.scrollTop = behindEl?.offsetHeight ?? 0;
     onscroll();
   }
 
   function onscroll(): void {
-    overdueHidden =
+    behindHidden =
       scroller !== undefined &&
-      overdueEl !== undefined &&
+      behindEl !== undefined &&
       scroller.scrollTop > 8;
   }
 
@@ -101,18 +101,19 @@
       <span class="grip"></span>
       backlog <b>{waiting.filter((t) => !t.done).length}</b>
       {#if late.length > 0}
-        <span class="late">&middot; {late.length} overdue</span>
+        <span class="late">&middot; {late.length} behind schedule</span>
       {/if}
     </button>
     <div class="scroller" bind:this={scroller} {onscroll} data-autoscroll>
       {#if late.length > 0}
-        <div class="overdue" bind:this={overdueEl} data-zone="overdue">
-          <h3>overdue</h3>
+        <div class="behind" bind:this={behindEl} data-zone="behind">
+          <h3>behind schedule</h3>
           <TaskList
-            zone="overdue"
+            zone="behind"
             tasks={late}
             ordered={false}
-            labelOf={(t: Task) => dueLabel(t.day ?? today.value, today.value)}
+            labelOf={(t: Task) =>
+              scheduleLabel(t.day ?? today.value, today.value)}
             unschedulable
           />
         </div>
@@ -131,11 +132,11 @@
         />
       </div>
     </div>
-    {#if late.length > 0 && overdueHidden}
+    {#if late.length > 0 && behindHidden}
       <button
         class="peek"
         onclick={() => scroller?.scrollTo({ top: 0, behavior: "smooth" })}
-        >&uarr; {late.length} overdue</button
+        >&uarr; {late.length} behind schedule</button
       >
     {/if}
   </aside>
@@ -243,16 +244,16 @@
     overflow-y: auto;
     overscroll-behavior: contain;
     touch-action: pan-y;
-    padding: 6px 6px 40vh; /* room to scroll the overdue block away */
+    padding: 6px 6px 40vh; /* room to scroll the behind-schedule block away */
   }
 
-  .overdue {
+  .behind {
     padding-bottom: 6px;
     margin-bottom: 8px;
     border-bottom: 1.5px dashed rgb(from var(--accent) r g b / 50%);
   }
 
-  .overdue h3 {
+  .behind h3 {
     color: var(--accent);
   }
 

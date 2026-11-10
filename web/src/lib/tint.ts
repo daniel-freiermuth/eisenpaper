@@ -156,7 +156,7 @@ function look(rgb: Rgb, alpha: number): TintLook {
   const bg = mix(PAPER, rgb, alpha);
   const fg = mainText(bg);
   // secondary text stays on fg's side: grey under dark text, its light
-  // twin under light text. Overdue dates are not coloured here: near the
+  // twin under light text. Behind-schedule dates are not coloured here: near the
   // dark/light switch no red reaches 4.5:1, so they get a red chip instead.
   const dark = luminance(fg) < 0.5;
   const muted = readable(dark ? PENCIL : LIGHT_PENCIL, fg, bg, LABEL_CONTRAST);

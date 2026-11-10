@@ -9,7 +9,7 @@
     tasks: Task[];
     /** whether a drop lands where it is released (days) or by rank (backlog) */
     ordered?: boolean;
-    /** per-task label, e.g. the original day of an overdue task */
+    /** per-task label, e.g. the original day of a behind-schedule task */
     labelOf?: (task: Task) => string;
     unschedulable?: boolean;
     empty?: string;
