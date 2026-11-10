@@ -8,7 +8,7 @@ import SchedulePane from "./SchedulePane.svelte";
 import { store } from "./sheet.svelte";
 import { today } from "./today.svelte";
 
-// SchedulePane is the real host: an overdue scrap shows both the ✓ and the
+// SchedulePane is the real host: a behind-schedule scrap shows both the ✓ and the
 // × button, and the app root delegates events as it does in the app.
 let pane: Record<string, unknown>;
 

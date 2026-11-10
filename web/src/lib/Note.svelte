@@ -2,7 +2,7 @@
   import type { Attachment } from "svelte/attachments";
 
   import { rotation, type Task } from "./model";
-  import { dueLabel } from "./schedule";
+  import { scheduleLabel } from "./schedule";
   import { store } from "./sheet.svelte";
   import { tintStyle } from "./tint";
   import { today } from "./today.svelte";
@@ -199,7 +199,8 @@
       <span
         class="when"
         class:late={!task.done && task.day < today.value}
-        title="scheduled {task.day}">{dueLabel(task.day, today.value)}</span
+        title="scheduled {task.day}"
+        >{scheduleLabel(task.day, today.value)}</span
       >
     {/if}
     <button
@@ -297,7 +298,7 @@
   }
 
   /* no red text reads at every tint (mid-tones defeat any hue), so on a
-     tint an overdue date becomes a red chip carrying its own contrast */
+     tint a behind-schedule date becomes a red chip carrying its own contrast */
   .tinted .when.late {
     padding: 0 4px;
     border-radius: 3px;

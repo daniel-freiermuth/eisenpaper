@@ -38,7 +38,7 @@ const byDayOrder = (a: Task, b: Task): number =>
   (a.order ?? Infinity) - (b.order ?? Infinity) || a.created - b.created;
 
 /** Open tasks scheduled before `today`, oldest day first. */
-export function overdue(tasks: readonly Task[], today: string): Task[] {
+export function behindSchedule(tasks: readonly Task[], today: string): Task[] {
   return tasks
     .filter((t) => !t.done && t.day !== undefined && t.day < today)
     .sort((a, b) =>
@@ -84,7 +84,7 @@ const fmt = (day: string, opts: Intl.DateTimeFormatOptions): string =>
   dayDate(day).toLocaleDateString("en-GB", opts);
 
 /** Short relative label for a scheduled day: "today", "Fri", "14 Oct". */
-export function dueLabel(day: string, today: string): string {
+export function scheduleLabel(day: string, today: string): string {
   if (day === today) return "today";
   if (day === addDays(today, 1)) return "tomorrow";
   if (day > today && day < addDays(today, 7))
