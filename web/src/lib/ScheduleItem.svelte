@@ -154,7 +154,8 @@
     color: var(--muted);
   }
 
-  /* see Note.svelte: on a tint the behind-schedule date is a red chip */
+  /* no red text reads at every tint (mid-tones defeat any hue), so on a
+     tint a behind-schedule date becomes a red chip carrying its own contrast */
   .tinted .when {
     padding: 0 4px;
     border-radius: 3px;
