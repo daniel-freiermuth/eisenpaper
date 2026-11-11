@@ -508,6 +508,32 @@ describe("SheetStore.sync", () => {
     expect(store.status).toBe("synced");
   });
 
+  it("pushes offline edits after a reload with If-Match from the GET when nobody saved since", async () => {
+    const tasks = fakeServer(serverText);
+    let store = await loadStore();
+    fetchMock.mockImplementation(tasks.handle);
+    await store.sync();
+
+    fetchMock.mockRejectedValue(new TypeError("network down"));
+    const task = store.sheet.tasks[0];
+    if (task === undefined) throw new Error("server sheet not adopted");
+    store.toggleDone(task);
+    await vi.advanceTimersByTimeAsync(300);
+    expect(store.status).toBe("offline");
+
+    // the app reloads, back online; tasks.json is as the phone last saw it
+    store = await loadStore();
+    fetchMock.mockReset();
+    fetchMock.mockImplementation(tasks.handle);
+    await store.sync();
+
+    const sent = puts().map(([, init]) => new Headers(init?.headers));
+    expect(sent.map((h) => h.get("if-match"))).toEqual(['"v0"']);
+    expect(sent.map((h) => h.get("if-none-match"))).toEqual([null]);
+    expect(tasks.sheet()).toMatchObject({ tasks: [{ id: "t1", done: true }] });
+    expect(store.status).toBe("synced");
+  });
+
   it("does not bring back a task another device deleted", async () => {
     const tasks = fakeServer(serverText);
     const store = await storeSyncedWith(tasks);
