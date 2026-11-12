@@ -177,8 +177,7 @@ describe("SheetStore.sync", () => {
     expect(store.status).toBe("synced");
 
     fetchMock.mockRejectedValue(new TypeError("network down"));
-    const task = store.sheet.tasks[0];
-    if (task === undefined) throw new Error("server sheet not adopted");
+    const task = firstTask(store);
     store.toggleDone(task);
     await vi.advanceTimersByTimeAsync(300);
     expect(store.status).toBe("offline");
@@ -291,8 +290,7 @@ describe("SheetStore.sync", () => {
     await store.sync();
     expect(store.status).toBe("error");
 
-    const task = store.sheet.tasks[0];
-    if (task === undefined) throw new Error("cached sheet not loaded");
+    const task = firstTask(store, "cached sheet not loaded");
     store.toggleDone(task);
     await vi.advanceTimersByTimeAsync(300);
 
@@ -314,8 +312,7 @@ describe("SheetStore.sync", () => {
     await store.sync();
     expect(store.status).toBe("error");
 
-    const task = store.sheet.tasks[0];
-    if (task === undefined) throw new Error("cached sheet not loaded");
+    const task = firstTask(store, "cached sheet not loaded");
     store.toggleDone(task);
     await vi.advanceTimersByTimeAsync(300);
 
@@ -384,8 +381,7 @@ describe("SheetStore.sync", () => {
     // the phone adds a task; the focused desktop never pulls it
     const phoneTask = { ...serverTask, id: "phone", text: "buy milk" };
     tasks.save({ tasks: [serverTask, phoneTask], archive: [] });
-    const task = store.sheet.tasks[0];
-    if (task === undefined) throw new Error("server sheet not adopted");
+    const task = firstTask(store);
     store.toggleDone(task);
     await vi.advanceTimersByTimeAsync(300);
 
@@ -490,8 +486,7 @@ describe("SheetStore.sync", () => {
     let store = await storeSyncedWith(tasks); // the phone
 
     fetchMock.mockRejectedValue(new TypeError("network down"));
-    const task = store.sheet.tasks[0];
-    if (task === undefined) throw new Error("server sheet not adopted");
+    const task = firstTask(store);
     store.toggleDone(task);
     await vi.advanceTimersByTimeAsync(300);
     expect(store.status).toBe("offline");
@@ -727,8 +722,7 @@ describe("SheetStore.sync", () => {
     const store = await loadStore();
     fetchMock.mockImplementation(server(204));
     await store.sync();
-    const task = store.sheet.tasks[0];
-    if (task === undefined) throw new Error("server sheet not adopted");
+    const task = firstTask(store);
 
     let resolveGet: (res: Response) => void = () => undefined;
     fetchMock.mockReset();
@@ -875,9 +869,12 @@ async function syncedStore() {
   return store;
 }
 
-function firstTask(store: { sheet: Sheet }): Task {
+function firstTask(
+  store: { sheet: Sheet },
+  missing = "server sheet not adopted",
+): Task {
   const task = store.sheet.tasks[0];
-  if (task === undefined) throw new Error("server sheet not adopted");
+  if (task === undefined) throw new Error(missing);
   return task;
 }
 
