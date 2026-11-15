@@ -224,24 +224,31 @@ fn etag(bytes: &[u8]) -> HeaderValue {
     HeaderValue::try_from(format!("\"{hash:016x}\"")).expect("hex is a valid header value")
 }
 
-/// Whether a comma-separated entity-tag list names `current` (`*` names any
+/// Whether a comma-separated entity-tag list, spread over any number of field
+/// lines (RFC 9110 §5.3), names `current` (`*` names any
 /// existing sheet). `If-Match` compares strongly, so a weak tag never
 /// matches; `If-None-Match` compares weakly, ignoring a tag's `W/` (ours,
 /// `current`, are never weak).
-fn names(list: &HeaderValue, current: Option<&HeaderValue>, weak: bool) -> bool {
+fn names(
+    lines: &axum::http::header::GetAll<'_, HeaderValue>,
+    current: Option<&HeaderValue>,
+    weak: bool,
+) -> bool {
     let Some(current) = current else {
         return false;
     };
-    let Ok(list) = list.to_str() else {
-        return false;
-    };
-    list.split(',').map(str::trim).any(|tag| {
-        let tag = if weak {
-            tag.strip_prefix("W/").unwrap_or(tag)
-        } else {
-            tag
+    lines.iter().any(|list| {
+        let Ok(list) = list.to_str() else {
+            return false;
         };
-        tag == "*" || tag.as_bytes() == current.as_bytes()
+        list.split(',').map(str::trim).any(|tag| {
+            let tag = if weak {
+                tag.strip_prefix("W/").unwrap_or(tag)
+            } else {
+                tag
+            };
+            tag == "*" || tag.as_bytes() == current.as_bytes()
+        })
     })
 }
 
@@ -249,14 +256,16 @@ fn names(list: &HeaderValue, current: Option<&HeaderValue>, weak: bool) -> bool 
 /// no sheet), per RFC 9110 §13.2.2. A PUT without any is refused with 428
 /// (RFC 6585): that is a blind overwrite of whatever another device saved.
 fn precondition(headers: &HeaderMap, current: Option<&HeaderValue>) -> Result<(), StatusCode> {
-    let if_match = headers.get(IF_MATCH);
-    let if_none_match = headers.get(IF_NONE_MATCH);
-    if if_match.is_none() && if_none_match.is_none() {
+    let if_match = headers.get_all(IF_MATCH);
+    let if_none_match = headers.get_all(IF_NONE_MATCH);
+    let has_if_match = if_match.iter().next().is_some();
+    let has_if_none_match = if_none_match.iter().next().is_some();
+    if !has_if_match && !has_if_none_match {
         return Err(StatusCode::PRECONDITION_REQUIRED);
     }
     // both are evaluated when both are sent: If-Match first, then If-None-Match
-    let ok = if_match.is_none_or(|list| names(list, current, false))
-        && if_none_match.is_none_or(|list| !names(list, current, true));
+    let ok = (!has_if_match || names(&if_match, current, false))
+        && (!has_if_none_match || !names(&if_none_match, current, true));
     if ok {
         Ok(())
     } else {
@@ -1548,6 +1557,34 @@ mod tests {
         let res = put(&app, ("if-none-match", &weak), &version(2)).await;
         assert_eq!(res.status(), StatusCode::PRECONDITION_FAILED);
         assert_eq!(fs::read(&data).unwrap(), version(1));
+    }
+
+    #[tokio::test]
+    async fn preconditions_read_every_field_line() {
+        let (app, data) = scratch_app("field-lines");
+        fs::write(&data, version(1)).unwrap();
+        let current = tag_of(&call(&app, "GET", "/tasks.json", Vec::new()).await);
+        // RFC 9110 §5.3: repeated field lines are one comma-joined list
+        let req = Request::builder()
+            .method("PUT")
+            .uri("/tasks.json")
+            .header("if-none-match", "\"zzz\"")
+            .header("if-none-match", &current)
+            .body(Body::from(version(2)))
+            .unwrap();
+        let res = app.clone().oneshot(req).await.unwrap();
+        assert_eq!(res.status(), StatusCode::PRECONDITION_FAILED);
+        assert_eq!(fs::read(&data).unwrap(), version(1));
+        let req = Request::builder()
+            .method("PUT")
+            .uri("/tasks.json")
+            .header("if-match", "\"zzz\"")
+            .header("if-match", &current)
+            .body(Body::from(version(2)))
+            .unwrap();
+        let res = app.clone().oneshot(req).await.unwrap();
+        assert_eq!(res.status(), StatusCode::NO_CONTENT);
+        assert_eq!(fs::read(&data).unwrap(), version(2));
     }
 
     #[tokio::test]
