@@ -8,13 +8,16 @@ import type { Task } from "./model";
 export function dayKey(date: Date): string {
   const m = String(date.getMonth() + 1).padStart(2, "0");
   const d = String(date.getDate()).padStart(2, "0");
-  return `${String(date.getFullYear())}-${m}-${d}`;
+  return `${String(date.getFullYear()).padStart(4, "0")}-${m}-${d}`;
 }
 
 /** Local midnight of a day key. */
 export function dayDate(day: string): Date {
   const [y = 0, m = 1, d = 1] = day.split("-").map(Number);
-  return new Date(y, m - 1, d);
+  // new Date(y, …) reads years 0-99 as 1900-1999; setFullYear does not.
+  const date = new Date(0, 0, 1);
+  date.setFullYear(y, m - 1, d);
+  return date;
 }
 
 /** Calendar arithmetic: `n` days after `day` (negative goes back). */
