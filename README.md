@@ -98,8 +98,9 @@ usage: eisenpaper [--host H] [--port P] [--web DIR] [--data FILE]
   (fsynced temp file + rename), so a crash, a power loss or a file syncer
   such as Syncthing never sees half a sheet. If `tasks.json` is a symlink —
   say into a Syncthing folder — the file it points at is updated (or
-  created, if it does not exist yet) and the link kept. Uploads that are not
-  a sheet are refused; the stored body is otherwise kept byte for byte.
+  created, if it does not exist yet) and the link kept. Uploads the app
+  would refuse to load (see [the sheet format](#the-sheet-format)) are
+  refused with `400`; the stored body is otherwise kept byte for byte.
 - A `PUT` must name the version it replaces: `If-Match` with the current
   sheet's `ETag`, or `If-None-Match: *` to create a sheet where there is
   none. A stale tag is refused with `412 Precondition Failed`, a `PUT` with
@@ -147,7 +148,9 @@ usage: eisenpaper [--host H] [--port P] [--web DIR] [--data FILE]
 ```
 
 `x` runs from not urgent (0) to urgent (1), `y` from important (0) to not
-important (1). `day`, `order`, `project`, `note` and `color` are optional.
+important (1). `day`, `order`, `project`, `note` and `color` are optional
+but never `null`; `day` is a real calendar date. Task ids are unique within
+their list, as are archive `at`s and project ids.
 Unknown fields are kept, so an older tab never strips data a newer one
 wrote.
 
