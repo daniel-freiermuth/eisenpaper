@@ -6,8 +6,11 @@
 //! client that missed another device's save gets a 412 instead of
 //! overwriting it. Every other `GET` is a file from the web directory.
 
+use std::borrow::Cow;
+use std::fmt;
 use std::fs;
 use std::io::{self, Write as _};
+use std::marker::PhantomData;
 use std::path::{Path, PathBuf};
 use std::pin::Pin;
 use std::process::ExitCode;
@@ -27,7 +30,7 @@ use hyper::server::conn::http1;
 use hyper_util::rt::{TokioIo, TokioTimer};
 use hyper_util::service::TowerToHyperService;
 use serde::Deserialize;
-use serde::de::IgnoredAny;
+use serde::de::{self, DeserializeSeed, Deserializer, IgnoredAny, MapAccess, Visitor};
 use tokio::io::{AsyncRead, AsyncWrite, ReadBuf};
 use tokio::net::TcpListener;
 use tokio::sync::Semaphore;
@@ -296,21 +299,279 @@ async fn get_sheet(State(cfg): State<Arc<Config>>) -> Response {
         .into_response()
 }
 
-/// The shape of a sheet, mirroring `SheetSchema` in `web/src/lib/model.ts`.
+/// The shape of a sheet, mirroring `SheetSchema` in `web/src/lib/model.ts`:
+/// whatever the app would refuse to load is refused here, so no device can
+/// store a sheet that locks every other device out.
 ///
 /// Only checked, never used: the raw body is what gets stored, so unknown
-/// fields and the task contents round-trip untouched.
+/// fields round-trip untouched.
 #[derive(Deserialize)]
 #[serde(rename_all = "camelCase")]
 #[expect(dead_code, reason = "parsed to validate the upload, then dropped")]
-struct SheetShape {
+struct SheetShape<'a> {
     /// Open tasks.
-    tasks: Vec<IgnoredAny>,
+    #[serde(borrow)]
+    tasks: Vec<Object<TaskShape<'a>>>,
     /// Archived sheets.
-    archive: Vec<IgnoredAny>,
+    #[serde(borrow)]
+    archive: Vec<Object<ArchivedShape<'a>>>,
+    /// Absent on sheets written before projects existed.
+    #[serde(default, deserialize_with = "present", borrow)]
+    projects: Option<Vec<Object<ProjectShape<'a>>>>,
     /// Optional, but a number when present: `null` is refused like the app does.
     #[serde(default)]
     saved_at: f64,
+}
+
+impl SheetShape<'_> {
+    /// The keys the app's renderer requires unique: task ids within each
+    /// list, archive `at`s, project ids.
+    fn has_unique_keys(&self) -> bool {
+        let mut ats: Vec<f64> = self.archive.iter().map(|a| a.0.at).collect();
+        ats.sort_unstable_by(f64::total_cmp);
+        unique_ids(&self.tasks, |t| &t.0.id)
+            && self
+                .archive
+                .iter()
+                .all(|a| unique_ids(&a.0.tasks, |t| &t.0.id))
+            && self
+                .projects
+                .as_ref()
+                .is_none_or(|p| unique_ids(p, |p| &p.0.id))
+            // `==`, like the app's Set: -0 and 0 are one key
+            && ats.windows(2).all(|w| w.first() != w.last())
+    }
+}
+
+/// Whether no two `items` share an id.
+fn unique_ids<T>(items: &[T], id: impl Fn(&T) -> &JsString<'_>) -> bool {
+    let mut seen = std::collections::HashSet::with_capacity(items.len());
+    items.iter().all(|item| seen.insert(&id(item).0))
+}
+
+/// One task, mirroring `TaskSchema`.
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+#[expect(dead_code, reason = "parsed to validate the upload, then dropped")]
+struct TaskShape<'a> {
+    /// Unique within its list.
+    #[serde(borrow)]
+    id: JsString<'a>,
+    /// The scrap's text.
+    text: Text,
+    /// Urgency, normally 0..1.
+    x: f64,
+    /// Importance, normally 0..1.
+    y: f64,
+    /// Whether it is ticked off.
+    done: bool,
+    /// Creation time.
+    created: f64,
+    /// When it was ticked off.
+    #[serde(default, deserialize_with = "present")]
+    done_at: Option<f64>,
+    /// Scheduled local date.
+    #[serde(default, deserialize_with = "present")]
+    day: Option<Day>,
+    /// Position within its day.
+    #[serde(default, deserialize_with = "present")]
+    order: Option<f64>,
+    /// Id of the task's project.
+    #[serde(default, deserialize_with = "present")]
+    project: Option<Text>,
+    /// Free-text annotations.
+    #[serde(default, deserialize_with = "present")]
+    note: Option<Text>,
+}
+
+/// One archived sheet, mirroring `ArchivedSheetSchema`.
+#[derive(Deserialize)]
+struct ArchivedShape<'a> {
+    /// When it was archived; unique among archived sheets.
+    at: f64,
+    /// Its tasks.
+    #[serde(borrow)]
+    tasks: Vec<Object<TaskShape<'a>>>,
+}
+
+/// One project, mirroring `ProjectSchema`.
+#[derive(Deserialize)]
+#[expect(dead_code, reason = "parsed to validate the upload, then dropped")]
+struct ProjectShape<'a> {
+    /// Unique among projects.
+    #[serde(borrow)]
+    id: JsString<'a>,
+    /// Its label.
+    name: Text,
+    /// Its tint.
+    #[serde(default, deserialize_with = "present")]
+    color: Option<Text>,
+}
+
+/// A JSON object read as `T`. A derived struct also reads a positional
+/// array of its fields, which the app's `looseObject` refuses.
+///
+/// Keys reach `T` as bytes: read as identifiers, they would go through
+/// `serde_json`'s validating string parse, which refuses an escaped lone
+/// surrogate the app keeps in an unknown key and writes back.
+struct Object<T>(T);
+
+impl<'de, T: Deserialize<'de>> Deserialize<'de> for Object<T> {
+    fn deserialize<D: Deserializer<'de>>(d: D) -> Result<Self, D::Error> {
+        /// Accepts only a map, handing its entries to `T`.
+        struct Map<T>(PhantomData<T>);
+        impl<'de, T: Deserialize<'de>> Visitor<'de> for Map<T> {
+            type Value = T;
+            fn expecting(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+                f.write_str("an object")
+            }
+            fn visit_map<A: MapAccess<'de>>(self, map: A) -> Result<T, A::Error> {
+                T::deserialize(de::value::MapAccessDeserializer::new(KeysAsBytes(map)))
+            }
+        }
+        d.deserialize_map(Map(PhantomData)).map(Object)
+    }
+}
+
+/// A map whose keys are read as bytes, see [`Object`].
+struct KeysAsBytes<A>(A);
+
+impl<'de, A: MapAccess<'de>> MapAccess<'de> for KeysAsBytes<A> {
+    type Error = A::Error;
+    fn next_key_seed<K: DeserializeSeed<'de>>(
+        &mut self,
+        seed: K,
+    ) -> Result<Option<K::Value>, A::Error> {
+        self.0.next_key_seed(BytesKey(seed))
+    }
+    fn next_value_seed<V: DeserializeSeed<'de>>(&mut self, seed: V) -> Result<V::Value, A::Error> {
+        self.0.next_value_seed(seed)
+    }
+    fn size_hint(&self) -> Option<usize> {
+        self.0.size_hint()
+    }
+}
+
+/// Reads a key as bytes and hands them to the key's own seed.
+struct BytesKey<K>(K);
+
+impl<'de, K: DeserializeSeed<'de>> DeserializeSeed<'de> for BytesKey<K> {
+    type Value = K::Value;
+    fn deserialize<D: Deserializer<'de>>(self, d: D) -> Result<K::Value, D::Error> {
+        d.deserialize_bytes(self)
+    }
+}
+
+impl<'de, K: DeserializeSeed<'de>> Visitor<'de> for BytesKey<K> {
+    type Value = K::Value;
+    fn expecting(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str("an object key")
+    }
+    fn visit_bytes<E: de::Error>(self, v: &[u8]) -> Result<K::Value, E> {
+        self.0.deserialize(de::value::BytesDeserializer::new(v))
+    }
+}
+
+/// For `#[serde(default, deserialize_with = "present")]`: an absent field is
+/// `None`, but `null` is refused, as the app's `v.optional` does.
+fn present<'de, D: Deserializer<'de>, T: Deserialize<'de>>(d: D) -> Result<Option<T>, D::Error> {
+    T::deserialize(d).map(Some)
+}
+
+/// A JSON string read as (WTF-8) bytes: a lone surrogate, which
+/// `JSON.stringify` escapes and `JSON.parse` takes back, is kept rather than
+/// refused as it would be by `String`. Borrowed unless it has escapes.
+struct JsString<'a>(Cow<'a, [u8]>);
+
+impl<'de: 'a, 'a> Deserialize<'de> for JsString<'a> {
+    fn deserialize<D: Deserializer<'de>>(d: D) -> Result<Self, D::Error> {
+        /// Takes the string's bytes.
+        struct Bytes;
+        impl<'de> Visitor<'de> for Bytes {
+            type Value = Cow<'de, [u8]>;
+            fn expecting(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+                f.write_str("a string")
+            }
+            fn visit_borrowed_bytes<E: de::Error>(self, v: &'de [u8]) -> Result<Self::Value, E> {
+                Ok(Cow::Borrowed(v))
+            }
+            fn visit_bytes<E: de::Error>(self, v: &[u8]) -> Result<Self::Value, E> {
+                Ok(Cow::Owned(v.to_vec()))
+            }
+        }
+        d.deserialize_bytes(Bytes).map(JsString)
+    }
+}
+
+/// A JSON string whose contents are not needed: checked like [`JsString`],
+/// never copied.
+struct Text;
+
+impl<'de> Deserialize<'de> for Text {
+    fn deserialize<D: Deserializer<'de>>(d: D) -> Result<Self, D::Error> {
+        /// Accepts any string.
+        struct AnyString;
+        impl Visitor<'_> for AnyString {
+            type Value = Text;
+            fn expecting(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+                f.write_str("a string")
+            }
+            fn visit_bytes<E: de::Error>(self, _: &[u8]) -> Result<Text, E> {
+                Ok(Text)
+            }
+        }
+        d.deserialize_bytes(AnyString)
+    }
+}
+
+/// A local date, YYYY-MM-DD, that is a real calendar day (`DaySchema`).
+struct Day;
+
+impl<'de> Deserialize<'de> for Day {
+    fn deserialize<D: Deserializer<'de>>(d: D) -> Result<Self, D::Error> {
+        /// Accepts a calendar day.
+        struct CalendarDay;
+        impl Visitor<'_> for CalendarDay {
+            type Value = Day;
+            fn expecting(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+                f.write_str("a calendar day, YYYY-MM-DD")
+            }
+            fn visit_bytes<E: de::Error>(self, v: &[u8]) -> Result<Day, E> {
+                if is_day(v) {
+                    Ok(Day)
+                } else {
+                    Err(E::invalid_value(de::Unexpected::Bytes(v), &self))
+                }
+            }
+        }
+        d.deserialize_bytes(CalendarDay)
+    }
+}
+
+/// Whether `s` is YYYY-MM-DD and a real calendar day, as the app's `DaySchema`
+/// (valibot's `isoDate` plus a `new Date(y, m - 1, d)` round-trip) decides.
+fn is_day(s: &[u8]) -> bool {
+    let &[y0, y1, y2, y3, b'-', m0, m1, b'-', d0, d1] = s else {
+        return false;
+    };
+    let digits = [y0, y1, y2, y3, m0, m1, d0, d1];
+    if !digits.iter().all(u8::is_ascii_digit) {
+        return false;
+    }
+    let two = |hi: u8, lo: u8| u32::from(hi - b'0') * 10 + u32::from(lo - b'0');
+    let year = two(y0, y1) * 100 + two(y2, y3);
+    // `new Date(y, …)` reads years below 100 as 19yy: the app takes 0000 for
+    // 1900, which is no leap year (years 1..=99 keep their leap status)
+    let year = if year < 100 { year + 1900 } else { year };
+    let leap = year % 4 == 0 && (year % 100 != 0 || year % 400 == 0);
+    let days = match two(m0, m1) {
+        1 | 3 | 5 | 7 | 8 | 10 | 12 => 31,
+        4 | 6 | 9 | 11 => 30,
+        2 if leap => 29,
+        2 => 28,
+        _ => return false,
+    };
+    (1..=days).contains(&two(d0, d1))
 }
 
 /// Why a sheet upload was refused.
@@ -338,6 +599,20 @@ fn resolve_links(data: &Path) -> Result<PathBuf, PutError> {
     )))
 }
 
+/// Whether the app would load `body` as a sheet.
+///
+/// The shapes read strings through `deserialize_bytes`, on which `serde_json`
+/// checks neither UTF-8 nor raw control characters (which `JSON.parse`
+/// refuses). So the body must be UTF-8 first: the app decodes it with
+/// replacement, which could merge distinct ids. Then a strict `IgnoredAny`
+/// pass over the whole body refuses the control characters.
+fn is_sheet(body: &[u8]) -> bool {
+    std::str::from_utf8(body).is_ok()
+        && serde_json::from_slice::<IgnoredAny>(body).is_ok()
+        && serde_json::from_slice::<Object<SheetShape<'_>>>(body)
+            .is_ok_and(|s| s.0.has_unique_keys())
+}
+
 /// Writes the sheet atomically (temp file + rename) after validating it, so
 /// a crash or a concurrent reader (Syncthing) never sees a partial sheet.
 ///
@@ -345,7 +620,7 @@ fn resolve_links(data: &Path) -> Result<PathBuf, PutError> {
 /// otherwise a power loss can persist the rename but not the data, leaving
 /// an empty or truncated sheet in place of the old one.
 fn write_sheet(data: &Path, body: &[u8]) -> Result<(), PutError> {
-    if serde_json::from_slice::<SheetShape>(body).is_err() {
+    if !is_sheet(body) {
         return Err(PutError::InvalidSheet);
     }
     // rename replaces a symlink rather than writing through it, so write next
@@ -684,7 +959,10 @@ mod tests {
 
     /// A distinct, valid sheet for each `n`.
     fn version(n: u8) -> Vec<u8> {
-        format!(r#"{{"tasks":[{n}],"archive":[]}}"#).into_bytes()
+        format!(
+            r#"{{"tasks":[{{"id":"{n}","text":"","x":0,"y":0,"done":false,"created":{n}}}],"archive":[]}}"#
+        )
+        .into_bytes()
     }
 
     /// In-memory connections for `axum::serve`. Without sockets, paused time
@@ -986,6 +1264,38 @@ mod tests {
             r#"{"tasks":[],"archive":[],"savedAt":"yesterday"}"#,
             r#"{"tasks":[],"archive":[],"savedAt":null}"#,
             r#"{"tasks":[],"archive":[],"savedAt":1e999}"#,
+            // each refused by the app's SheetSchema, so stored it would lock every device out
+            r#"{"tasks":[42],"archive":[]}"#,
+            r#"{"tasks":[{"text":"","x":0,"y":0,"done":false,"created":0}],"archive":[]}"#,
+            r#"{"tasks":[{"id":1,"text":"","x":0,"y":0,"done":false,"created":0}],"archive":[]}"#,
+            r#"{"tasks":[{"id":"a","text":"","x":0,"y":0,"done":0,"created":0}],"archive":[]}"#,
+            r#"{"tasks":[{"id":"a","text":"","x":1e999,"y":0,"done":false,"created":0}],"archive":[]}"#,
+            r#"{"tasks":[{"id":"a","text":"","x":0,"y":0,"done":false,"created":0,"doneAt":null}],"archive":[]}"#,
+            r#"{"tasks":[{"id":"a","text":"","x":0,"y":0,"done":false,"created":0,"note":5}],"archive":[]}"#,
+            r#"{"tasks":[{"id":"a","text":"","x":0,"y":0,"done":false,"created":0,"day":"2026-11-31"}],"archive":[]}"#,
+            r#"{"tasks":[{"id":"a","text":"","x":0,"y":0,"done":false,"created":0,"day":"2025-02-29"}],"archive":[]}"#,
+            r#"{"tasks":[{"id":"a","text":"","x":0,"y":0,"done":false,"created":0,"day":"0000-02-29"}],"archive":[]}"#,
+            r#"{"tasks":[{"id":"a","text":"","x":0,"y":0,"done":false,"created":0,"day":"2026-1-05"}],"archive":[]}"#,
+            r#"{"tasks":[{"id":"a","text":"","x":0,"y":0,"done":false,"created":0,"day":"2026-11-05T00:00"}],"archive":[]}"#,
+            r#"{"tasks":[{"id":"a","text":"","x":0,"y":0,"done":false,"created":0},{"id":"\u0061","text":"","x":1,"y":1,"done":true,"created":1}],"archive":[]}"#,
+            r#"{"tasks":[],"archive":[{"at":1,"tasks":[]},{"at":1.0,"tasks":[]}]}"#,
+            // one number to JSON.parse, which rounds correctly
+            r#"{"tasks":[],"archive":[{"at":1086467589728.2482910156250000000000000,"tasks":[]},{"at":1086467589728.2483,"tasks":[]}]}"#,
+            r#"{"tasks":[],"archive":[{"at":1,"tasks":[{"id":"a","text":"","x":0,"y":0,"done":false,"created":0},{"id":"a","text":"","x":0,"y":0,"done":false,"created":0}]}]}"#,
+            r#"{"tasks":[],"archive":[{"tasks":[]}]}"#,
+            r#"{"tasks":[],"archive":[],"projects":5}"#,
+            r#"{"tasks":[],"archive":[],"projects":null}"#,
+            r#"{"tasks":[],"archive":[],"projects":[{"id":"p"}]}"#,
+            r#"{"tasks":[],"archive":[],"projects":[{"id":"p","name":"A"},{"id":"p","name":"B"}]}"#,
+            // serde reads a struct from a positional array too; the app wants objects
+            "[[],[]]",
+            r#"{"tasks":[["a","",0,0,false,0]],"archive":[]}"#,
+            r#"{"tasks":[],"archive":[[1,[]]]}"#,
+            r#"{"tasks":[],"archive":[],"projects":[["p","n"]]}"#,
+            // raw control characters inside a string: JSON.parse refuses them
+            "{\"tasks\":[{\"id\":\"a\",\"text\":\"line1\nline2\ttab\",\"x\":0,\"y\":0,\"done\":false,\"created\":0}],\"archive\":[]}",
+            "{\"tasks\":[{\"id\":\"a\u{1}\",\"text\":\"\",\"x\":0,\"y\":0,\"done\":false,\"created\":0}],\"archive\":[]}",
+            "{\"tasks\":[],\"archive\":[],\"projects\":[{\"id\":\"p\",\"name\":\"a\rb\"}]}",
         ] {
             assert!(
                 matches!(
@@ -996,6 +1306,14 @@ mod tests {
             );
             assert_eq!(fs::read_to_string(&data).unwrap(), existing);
         }
+        // not UTF-8: the app decodes each bad sequence to U+FFFD, so these
+        // two ids would become one
+        let bad = b"{\"tasks\":[{\"id\":\"\xFF\",\"text\":\"\",\"x\":0,\"y\":0,\"done\":false,\"created\":0},{\"id\":\"\xFE\",\"text\":\"\",\"x\":0,\"y\":0,\"done\":false,\"created\":0}],\"archive\":[]}";
+        assert!(matches!(
+            write_sheet(&data, bad),
+            Err(PutError::InvalidSheet)
+        ));
+        assert_eq!(fs::read_to_string(&data).unwrap(), existing);
     }
 
     #[test]
@@ -1004,7 +1322,13 @@ mod tests {
         let data = dir.join("tasks.json");
         for good in [
             r#"{"tasks":[],"archive":[]}"#,
-            r#"{"tasks":[{"id":"a","x":1}],"archive":[{"at":1,"tasks":[]}],"savedAt":1700000000000,"future":{"k":[1]}}"#,
+            r#"{"tasks":[{"id":"a","text":"","x":1,"y":0,"done":false,"created":0,"later":true}],"archive":[{"at":1,"tasks":[{"id":"a","text":"","x":0,"y":0,"done":true,"created":0,"doneAt":2}]}],"savedAt":1700000000000,"future":{"k":[1]}}"#,
+            // optional fields present; the same id may recur across archive entries
+            r##"{"tasks":[{"id":"a","text":"t\n\"q\"","x":0.5,"y":0.5,"done":true,"created":1,"doneAt":2,"day":"2024-02-29","order":0,"project":"p","note":"n"}],"archive":[{"at":1,"tasks":[{"id":"a","text":"","x":0,"y":0,"done":false,"created":0}]},{"at":2,"tasks":[{"id":"a","text":"","x":0,"y":0,"done":false,"created":0}]}],"projects":[{"id":"p","name":"P","color":"#2f5d9e"},{"id":"q","name":"Q"}]}"##,
+            // JSON.stringify escapes a lone surrogate and JSON.parse takes it back
+            r#"{"tasks":[{"id":"\ud800","text":"\udc00","x":0,"y":0,"done":false,"created":0},{"id":"\udc00","text":"","x":0,"y":0,"done":false,"created":0}],"archive":[]}"#,
+            // also in an unknown key, which the app keeps; escaped known keys still match
+            r#"{"\ud800":1,"tasks":[{"\u0069d":"a","text":"","x":0,"y":0,"done":false,"created":0,"\udc00":1}],"archive":[{"at":1,"tasks":[],"\ud800":1}],"projects":[{"id":"p","name":"P","\ud800":1}]}"#,
         ] {
             write_sheet(&data, good.as_bytes()).unwrap();
             assert_eq!(fs::read_to_string(&data).unwrap(), good);
@@ -1016,9 +1340,9 @@ mod tests {
         let dir = scratch("atomic");
         let data = dir.join("tasks.json");
         fs::write(&data, "{}").unwrap();
-        let sheet = r#"{"tasks":[1],"archive":[]}"#;
-        write_sheet(&data, sheet.as_bytes()).unwrap();
-        assert_eq!(fs::read_to_string(&data).unwrap(), sheet);
+        let sheet = version(1);
+        write_sheet(&data, &sheet).unwrap();
+        assert_eq!(fs::read(&data).unwrap(), sheet);
         let leftovers: Vec<_> = fs::read_dir(&dir)
             .unwrap()
             .map(|e| e.unwrap().file_name())
