@@ -34,6 +34,10 @@ describe("addDays", () => {
     expect(addDays("2026-10-24", 2)).toBe("2026-10-26");
     expect(addDays("2027-03-27", 2)).toBe("2027-03-29");
   });
+  it("keeps years below 100 as they are", () => {
+    expect(addDays("0026-10-25", 1)).toBe("0026-10-26");
+    expect(addDays("0001-01-01", -1)).toBe("0000-12-31");
+  });
 });
 
 describe("backlog", () => {
