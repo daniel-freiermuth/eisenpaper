@@ -36,6 +36,12 @@ const current = (): Sheet => ({
   archive: [],
 });
 
+/** A refused or cancelled whole-sheet change: nothing saved, nothing replaced. */
+function expectSheetUntouched(): void {
+  expect(commit).not.toHaveBeenCalled();
+  expect(store.sheet).toEqual(current());
+}
+
 const imported: Sheet = {
   tasks: [scrap("in1", false), scrap("in2", true)],
   archive: [{ at: 5, tasks: [scrap("old1", true)] }],
@@ -87,8 +93,7 @@ describe("Toolbar import", () => {
 
     expect(alert).not.toHaveBeenCalled();
     expect(confirm).not.toHaveBeenCalled();
-    expect(commit).not.toHaveBeenCalled();
-    expect(store.sheet).toEqual(current());
+    expectSheetUntouched();
   });
 
   it.each([
@@ -107,8 +112,7 @@ describe("Toolbar import", () => {
       );
     });
     expect(confirm).not.toHaveBeenCalled();
-    expect(commit).not.toHaveBeenCalled();
-    expect(store.sheet).toEqual(current());
+    expectSheetUntouched();
     // a corrected file under the same name must fire `change` again
     expect(input.value).toBe("");
   });
@@ -128,8 +132,7 @@ describe("Toolbar import", () => {
       );
     });
     expect(confirm).not.toHaveBeenCalled();
-    expect(commit).not.toHaveBeenCalled();
-    expect(store.sheet).toEqual(current());
+    expectSheetUntouched();
     expect(input.value).toBe("");
   });
 
@@ -154,8 +157,7 @@ describe("Toolbar import", () => {
     await vi.waitFor(() => {
       expect(confirm).toHaveBeenCalledOnce();
     });
-    expect(commit).not.toHaveBeenCalled();
-    expect(store.sheet).toEqual(current());
+    expectSheetUntouched();
   });
 
   it("clears the file input before asking, so the same file can be picked again", async () => {
@@ -232,8 +234,7 @@ describe("Toolbar fresh sheet", () => {
     buttonLabelled("fresh sheet").click();
 
     expect(confirm).toHaveBeenCalledOnce();
-    expect(commit).not.toHaveBeenCalled();
-    expect(store.sheet).toEqual(current());
+    expectSheetUntouched();
   });
 });
 
