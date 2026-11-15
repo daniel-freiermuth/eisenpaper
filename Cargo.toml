@@ -13,7 +13,9 @@ axum = { version = "0.8", default-features = false, features = ["http1", "tokio"
 hyper = { version = "1", features = ["http1", "server"] }
 hyper-util = { version = "0.1", features = ["service", "tokio"] }
 serde = { version = "1", features = ["derive"] }
-serde_json = "1"
+# float_roundtrip: parse numbers exactly as JSON.parse does, so archive `at`s
+# the app reads as one value are not taken for two
+serde_json = { version = "1", features = ["float_roundtrip"] }
 tokio = { version = "1", features = ["macros", "net", "rt", "sync", "time"] }
 
 [dev-dependencies]
