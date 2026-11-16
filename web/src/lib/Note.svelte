@@ -26,7 +26,8 @@
       GNOME and 500ms on Windows, so wait out the longest default */
   const CLICK_DELAY_MS = 500;
 
-  /** pointer, card position and pane size at press time; the card moves by the pointer's delta */
+  /** pointer, card position and pane size at press time; the card moves by
+      the pointer's delta. `edits` is store.editsBegun at press time */
   let press: {
     x: number;
     y: number;
@@ -35,6 +36,7 @@
     paneW: number;
     paneH: number;
     moved: boolean;
+    edits: number;
   } | null = null;
   let dragging = $state(false);
   let cancelled = false;
@@ -50,6 +52,15 @@
     getSelection()?.addRange(range);
   };
 
+  /** Enter on this note or one tabbed to began an edit mid-press, which is
+      still open. An edit open at the press does not count: on touch, the
+      focus move that ends it comes after a tap's pointerup, and a drag
+      sends none. A count, not an id: the same note may be edited anew */
+  function editStartedSince(edits: number): boolean {
+    const open = store.editingId !== null || store.draft !== null;
+    return open && store.editsBegun !== edits;
+  }
+
   function onpointerdown(e: PointerEvent): void {
     if (e.button !== 0 || editing) return;
     const el = e.currentTarget as HTMLElement;
@@ -62,12 +73,14 @@
       paneW: pane.clientWidth,
       paneH: pane.clientHeight,
       moved: false,
+      edits: store.editsBegun,
     };
     el.setPointerCapture(e.pointerId);
   }
 
   function onpointermove(e: PointerEvent): void {
-    if (press === null) return;
+    // an edit started mid-press: the note stays put until the release
+    if (press === null || editStartedSince(press.edits)) return;
     if (
       !press.moved &&
       Math.hypot(e.clientX - press.x, e.clientY - press.y) < DRAG_THRESHOLD_PX
@@ -89,13 +102,15 @@
 
   function onpointerup(): void {
     if (press === null) return;
-    const { moved } = press;
+    const { moved, edits } = press;
     press = null;
     dragging = false;
     if (moved) {
       store.commit();
       return;
     }
+    // selecting would open the detail pane and slide the panes under the caret
+    if (editStartedSince(edits)) return;
     store.selectLater(task.id, CLICK_DELAY_MS);
   }
 

@@ -351,6 +351,134 @@ describe("Note drag versus click", () => {
     expect(store.selectedId).toBeNull();
   });
 
+  /** a second note, t2, for focus moved with Tab while t1 is pressed */
+  function secondNote(): HTMLElement {
+    store.sheet.tasks.push({
+      id: "t2",
+      text: "call the plumber",
+      x: 0.2,
+      y: 0.2,
+      done: false,
+      created: 2,
+    });
+    flushSync();
+    const el = document.querySelectorAll<HTMLElement>(".note")[1];
+    if (el === undefined) throw new Error("second note not rendered");
+    return el;
+  }
+
+  it("edits on Enter while the button is still held, and the release neither selects nor drags", () => {
+    // selecting would open the detail pane under the caret; dragging would
+    // carry the note being typed in
+    pointer(note(), "pointerdown", 100, 100);
+    press(note(), "Enter");
+    expect(store.editingId).toBe("t1");
+
+    pointer(note(), "pointermove", 160, 100);
+    pointer(note(), "pointerup", 160, 100);
+    vi.advanceTimersByTime(500); // the click's double-click window ends
+    flushSync();
+
+    expect(store.editingId).toBe("t1");
+    expect(store.selectedId).toBeNull();
+    expect(task()).toMatchObject({ x: 0.5, y: 0.5 });
+    expect(commit).not.toHaveBeenCalled();
+  });
+
+  it("leaves a held note unselected when Enter edits another note tabbed to", () => {
+    const b = secondNote();
+    pointer(note(), "pointerdown", 100, 100); // the pointer stays captured
+    press(b, "Enter");
+    expect(store.editingId).toBe("t2");
+
+    pointer(note(), "pointerup", 100, 100);
+    vi.advanceTimersByTime(500); // the click's double-click window ends
+    flushSync();
+
+    expect(store.editingId).toBe("t2");
+    expect(store.selectedId).toBeNull();
+  });
+
+  it("stops a drag where it is when Enter edits another note, and commits it on release", () => {
+    const b = secondNote();
+    pointer(note(), "pointerdown", 100, 100);
+    pointer(note(), "pointermove", 160, 100); // a drag
+    press(b, "Enter");
+
+    pointer(note(), "pointermove", 300, 100);
+    expect(task().x).toBeCloseTo(0.56);
+    pointer(note(), "pointerup", 300, 100);
+    vi.runAllTimers();
+    flushSync();
+
+    expect(task().x).toBeCloseTo(0.56);
+    expect(commit).toHaveBeenCalledOnce();
+    expect(store.editingId).toBe("t2");
+    expect(store.selectedId).toBeNull();
+  });
+
+  // on touch, the compatibility mousedown that moves focus, and so ends an
+  // open edit, follows a tap's pointerup; a drag sends none at all
+  const touch = { pointerType: "touch" } as const;
+
+  it("selects a note tapped on touch while another is still being edited", () => {
+    const b = secondNote();
+    press(b, "Enter");
+    expect(store.editingId).toBe("t2");
+
+    pointer(note(), "pointerdown", 100, 100, touch);
+    pointer(note(), "pointerup", 100, 100, touch);
+    openEditor().blur(); // the tap's mousedown moves focus to t1
+    flushSync();
+    vi.advanceTimersByTime(500); // the tap's double-click window ends
+    flushSync();
+
+    expect(store.editingId).toBeNull();
+    expect(store.selectedId).toBe("t1");
+  });
+
+  it("drags a note on touch while another is still being edited", () => {
+    const b = secondNote();
+    press(b, "Enter");
+
+    pointer(note(), "pointerdown", 100, 100, touch);
+    pointer(note(), "pointermove", 160, 100, touch);
+    expect(task().x).toBeCloseTo(0.56);
+    pointer(note(), "pointerup", 160, 100, touch);
+
+    expect(commit).toHaveBeenCalledOnce();
+    expect(store.editingId).toBe("t2"); // nothing moved focus
+  });
+
+  it("leaves a held note unselected when the edit open at the press ends and Enter edits that note anew", () => {
+    const b = secondNote();
+    press(b, "Enter");
+    pointer(note(), "pointerdown", 100, 100);
+    openEditor().blur(); // the press's mousedown moves focus to t1
+    flushSync();
+    press(b, "Enter"); // Tab back to t2, Enter
+    expect(store.editingId).toBe("t2");
+
+    pointer(note(), "pointerup", 100, 100);
+    vi.advanceTimersByTime(500); // the click's double-click window ends
+    flushSync();
+
+    expect(store.editingId).toBe("t2");
+    expect(store.selectedId).toBeNull();
+  });
+
+  it("keeps a held note still when the edit open at the press ends and Enter edits that note anew", () => {
+    const b = secondNote();
+    press(b, "Enter");
+    pointer(note(), "pointerdown", 100, 100);
+    openEditor().blur(); // the press's mousedown moves focus to t1
+    flushSync();
+    press(b, "Enter"); // Tab back to t2, Enter
+
+    pointer(note(), "pointermove", 160, 100);
+    expect(task()).toMatchObject({ x: 0.5, y: 0.5 });
+  });
+
   it("moves the note from the threshold on and commits once on release", () => {
     pointer(note(), "pointerdown", 100, 100);
     pointer(note(), "pointermove", 106, 100); // exactly 6px
