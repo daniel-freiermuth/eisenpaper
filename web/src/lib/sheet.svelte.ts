@@ -123,6 +123,9 @@ class SheetStore {
   editingId = $state<string | null>(null);
   /** a new note being typed; joins the sheet only once it has text */
   draft = $state<Task | null>(null);
+  /** edits and drafts begun so far: tells an edit begun mid-press from the
+      one open at the press, even of the same note */
+  editsBegun = 0;
   /** id of the task open in the detail pane; view state, never persisted */
   selectedId = $state<string | null>(null);
   /** the selected task, gone once it leaves the sheet */
@@ -390,6 +393,7 @@ class SheetStore {
   }
 
   addDraft(x: number, y: number): void {
+    this.editsBegun += 1;
     this.editingId = null;
     this.draft = {
       id: newId(),
@@ -401,6 +405,7 @@ class SheetStore {
   }
 
   startEdit(task: Task): void {
+    this.editsBegun += 1;
     this.draft = null;
     this.editingId = task.id;
   }
