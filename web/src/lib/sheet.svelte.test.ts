@@ -596,6 +596,132 @@ describe("SheetStore.sync", () => {
     expect(store.status).toBe("synced");
   });
 
+  it("keeps edits the app before the base was kept failed to save across an edit offline and a reload", async () => {
+    // synced at 100, then t1 crossed out offline: stamped 200, never saved
+    const offline = {
+      tasks: [{ ...serverTask, done: true }],
+      archive: [],
+      savedAt: 200,
+    };
+    storage.set(CACHE_KEY, JSON.stringify(offline, null, 2));
+    // the new app opens still offline, and a note is added to t1
+    let store = await loadStore();
+    fetchMock.mockRejectedValue(new TypeError("network down"));
+    await store.sync();
+    store.setNote(firstTask(store), "hello");
+    await vi.advanceTimersByTimeAsync(WRITE_DELAY_MS);
+    expect(store.status).toBe("offline");
+
+    // the phone reloads the app, back online
+    const tasks = fakeServer(
+      JSON.stringify({ ...serverSheet, savedAt: 100 }, null, 2),
+    );
+    store = await loadStore();
+    await resync(store, tasks);
+
+    expect(tasks.sheet()).toMatchObject({
+      tasks: [{ id: "t1", done: true, note: "hello" }],
+    });
+    expect(store.status).toBe("synced");
+  });
+
+  it("takes an import over a cache from before the base kept once our save made it tasks.json, across a reload", async () => {
+    // synced at 100, then t1 crossed out offline: stamped 200, never saved
+    const plumber = { ...serverTask, id: "t2", text: "call the plumber" };
+    const offline = {
+      tasks: [{ ...serverTask, done: true }, plumber],
+      archive: [],
+      savedAt: 200,
+    };
+    const offlineText = JSON.stringify(offline, null, 2);
+    storage.set(CACHE_KEY, offlineText);
+    const tasks = fakeServer(
+      JSON.stringify(
+        { tasks: [serverTask, plumber], archive: [], savedAt: 100 },
+        null,
+        2,
+      ),
+    );
+    await storeSyncedWith(tasks);
+    await vi.advanceTimersByTimeAsync(WRITE_DELAY_MS);
+    // our save made the cache tasks.json, byte for byte
+    expect(storage.get(BASE_KEY)).toBe(offlineText);
+    expect(tasks.sheet()).toEqual(offline);
+
+    // the desktop imports a backup without savedAt, reopening t1, dropping t2
+    tasks.save({ tasks: [serverTask], archive: [] });
+    const store = await loadStore();
+    await resync(store, tasks);
+    await vi.advanceTimersByTimeAsync(WRITE_DELAY_MS);
+
+    expect(tasks.sheet()).toEqual({ tasks: [serverTask], archive: [] });
+    expect(puts()).toHaveLength(0);
+  });
+
+  it("takes an import over a cache from before the base kept once a pull saw it as tasks.json, across a reload", async () => {
+    // synced at 100, then t1 crossed out offline: stamped 200, never saved
+    const plumber = { ...serverTask, id: "t2", text: "call the plumber" };
+    const offline = {
+      tasks: [{ ...serverTask, done: true }, plumber],
+      archive: [],
+      savedAt: 200,
+    };
+    storage.set(CACHE_KEY, JSON.stringify(offline, null, 2));
+    const tasks = fakeServer(
+      JSON.stringify(
+        { tasks: [serverTask, plumber], archive: [], savedAt: 100 },
+        null,
+        2,
+      ),
+    );
+    // two tabs restored together: one's save of the cache wins, the
+    // other's gets a 412 and pulls the cache back as tasks.json
+    const tabA = await loadStore();
+    const tabB = await loadStore();
+    fetchMock.mockImplementation(tasks.handle);
+    await Promise.all([tabA.sync(), tabB.sync()]);
+    await vi.advanceTimersByTimeAsync(WRITE_DELAY_MS);
+    expect(tasks.sheet()).toEqual(offline);
+
+    // the desktop imports a backup without savedAt, reopening t1, dropping t2
+    tasks.save({ tasks: [serverTask], archive: [] });
+    const store = await loadStore();
+    await resync(store, tasks);
+    await vi.advanceTimersByTimeAsync(WRITE_DELAY_MS);
+
+    expect(tasks.sheet()).toEqual({ tasks: [serverTask], archive: [] });
+    expect(puts()).toHaveLength(0);
+  });
+
+  it("takes an import over a cache from before the base kept once our save put it back as tasks.json, across a reload", async () => {
+    const plumber = { ...serverTask, id: "t2", text: "call the plumber" };
+    const offline = {
+      tasks: [{ ...serverTask, done: true }, plumber],
+      archive: [],
+      savedAt: 200,
+    };
+    storage.set(CACHE_KEY, JSON.stringify(offline, null, 2));
+    // no tasks.json yet: an edit before any pull creates it, never merging
+    const tasks = fakeServer(null);
+    let store = await loadStore();
+    fetchMock.mockImplementation(tasks.handle);
+    store.setNote(firstTask(store), "x");
+    await vi.advanceTimersByTimeAsync(WRITE_DELAY_MS);
+    // undoing it saves the cache itself as tasks.json
+    store.setNote(firstTask(store), "");
+    await vi.advanceTimersByTimeAsync(WRITE_DELAY_MS);
+    expect(tasks.sheet()).toEqual(offline);
+
+    // the desktop imports a backup without savedAt, reopening t1, dropping t2
+    tasks.save({ tasks: [serverTask], archive: [] });
+    store = await loadStore();
+    await resync(store, tasks);
+    await vi.advanceTimersByTimeAsync(WRITE_DELAY_MS);
+
+    expect(tasks.sheet()).toEqual({ tasks: [serverTask], archive: [] });
+    expect(puts()).toHaveLength(0);
+  });
+
   it("merges a cache that never synced before the base was kept", async () => {
     // the app before BASE_KEY flagged it, and stamped its offline edits
     storage.set(
