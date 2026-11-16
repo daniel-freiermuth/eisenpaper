@@ -111,6 +111,24 @@ describe("parseSheet", () => {
     expect(parseSheet(text)).toHaveProperty("savedAt", 1760000000000);
   });
 
+  // schedule.ts's dayDate reads 0000 as year 0, a leap year, so the
+  // schedule can step onto 0000-02-29; the sheet must still load.
+  it("keeps a task scheduled on the leap day of year 0", () => {
+    const text = JSON.stringify({
+      tasks: [task({ day: "0000-02-29", order: 0 })],
+      archive: [],
+    });
+    expect(parseSheet(text)?.tasks[0]).toHaveProperty("day", "0000-02-29");
+  });
+
+  it.each(["0000-02-30", "0100-02-29", "0026-02-29"])(
+    "rejects the non-day %s",
+    (day) => {
+      const text = JSON.stringify({ tasks: [task({ day })], archive: [] });
+      expect(parseSheet(text)).toBeNull();
+    },
+  );
+
   // JSON.parse turns an overflowing literal into ±Infinity, which
   // JSON.stringify would write back as null — a sheet no client can load.
   it.each([
