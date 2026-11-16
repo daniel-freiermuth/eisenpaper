@@ -30,6 +30,13 @@ const BASE_KEY = "eisenpaper.v1.base";
  * app's synced cache.
  */
 const UNSYNCED_KEY = "eisenpaper.v1.unsynced";
+/**
+ * Set while BASE_KEY holds a cache from before BASE_KEY that tasks.json has
+ * not been seen to match yet (see legacyCache): an edit cached before the
+ * first sync keeps that cache as its base, and it must not pass on reload
+ * for a confirmed tasks.json, which would merge its failed saves as reverts.
+ */
+const LEGACY_KEY = "eisenpaper.v1.legacy";
 const ENDPOINT = "tasks.json";
 const WRITE_DELAY_MS = 300;
 /** browsers cap the bodies of all keepalive requests in flight at 64 KiB
@@ -86,11 +93,13 @@ function savedAt(sheet: Sheet): number {
  * since, else null. That app saved each edit at once and cached the sheets
  * it adopted, so the cache is the tasks.json it last synced with, short of
  * edits whose save failed: those stamped it newer than that tasks.json.
+ * Once an edit is cached on it, that cache is in BASE_KEY, flagged by
+ * LEGACY_KEY until tasks.json is seen to match it.
  */
 function legacyCache(): string | null {
-  if (cacheGet(BASE_KEY) !== null || cacheGet(UNSYNCED_KEY) !== null) {
-    return null;
-  }
+  if (cacheGet(UNSYNCED_KEY) !== null) return null;
+  const base = cacheGet(BASE_KEY);
+  if (base !== null) return cacheGet(LEGACY_KEY) === null ? null : base;
   const raw = cacheGet(CACHE_KEY);
   const cached = raw === null ? null : parseSheet(raw);
   return cached !== null && savedAt(cached) > 0 ? raw : null;
@@ -166,6 +175,11 @@ class SheetStore {
     } else if (!cacheSet(BASE_KEY, this.#lastServerText)) {
       cacheRemove(CACHE_KEY);
       cacheRemove(BASE_KEY);
+    } else if (this.#lastServerText === this.#legacyCache) {
+      // best effort, as for UNSYNCED_KEY: see LEGACY_KEY
+      cacheSet(LEGACY_KEY, "1");
+    } else {
+      cacheRemove(LEGACY_KEY);
     }
   }
 
@@ -239,6 +253,9 @@ class SheetStore {
       return;
     }
     this.#etag = res.headers.get("etag");
+    // tasks.json is now our sheet: a cache from before BASE_KEY it matches
+    // holds no failed saves any more
+    if (text === this.#legacyCache) this.#legacyCache = null;
     this.#lastServerText = text;
     this.#persist();
     if (this.#commits !== commits && this.#serialize() !== text) {
@@ -336,6 +353,8 @@ class SheetStore {
     }
     const merged = mergeSheets(baseSheet, $state.snapshot(this.sheet), remote);
     this.#etag = res.headers.get("etag");
+    // the base is tasks.json as seen now, no longer a cache from before BASE_KEY
+    this.#legacyCache = null;
     this.#lastServerText = text;
     if (sameJson(merged, remote)) {
       this.sheet = remote;
