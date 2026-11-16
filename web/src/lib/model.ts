@@ -78,7 +78,10 @@ const DaySchema = v.pipe(
   // isoDate checks only the format; "2026-11-31" must not pass.
   v.check((s) => {
     const [y, m, d] = s.split("-").map(Number) as [number, number, number];
-    const date = new Date(y, m - 1, d);
+    // new Date(y, …) reads years 0-99 as 1900-1999; setFullYear does not,
+    // so this agrees with schedule.ts's dayDate.
+    const date = new Date(0, 0, 1);
+    date.setFullYear(y, m - 1, d);
     return date.getMonth() === m - 1 && date.getDate() === d;
   }, "Invalid calendar date"),
 );

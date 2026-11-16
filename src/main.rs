@@ -548,8 +548,9 @@ impl<'de> Deserialize<'de> for Day {
     }
 }
 
-/// Whether `s` is YYYY-MM-DD and a real calendar day, as the app's `DaySchema`
-/// (valibot's `isoDate` plus a `new Date(y, m - 1, d)` round-trip) decides.
+/// Whether `s` is YYYY-MM-DD and a real proleptic Gregorian calendar day, as
+/// the app's `DaySchema` (valibot's `isoDate` plus a `setFullYear` round-trip)
+/// decides.
 fn is_day(s: &[u8]) -> bool {
     let &[y0, y1, y2, y3, b'-', m0, m1, b'-', d0, d1] = s else {
         return false;
@@ -560,9 +561,6 @@ fn is_day(s: &[u8]) -> bool {
     }
     let two = |hi: u8, lo: u8| u32::from(hi - b'0') * 10 + u32::from(lo - b'0');
     let year = two(y0, y1) * 100 + two(y2, y3);
-    // `new Date(y, …)` reads years below 100 as 19yy: the app takes 0000 for
-    // 1900, which is no leap year (years 1..=99 keep their leap status)
-    let year = if year < 100 { year + 1900 } else { year };
     let leap = year % 4 == 0 && (year % 100 != 0 || year % 400 == 0);
     let days = match two(m0, m1) {
         1 | 3 | 5 | 7 | 8 | 10 | 12 => 31,
@@ -1274,7 +1272,8 @@ mod tests {
             r#"{"tasks":[{"id":"a","text":"","x":0,"y":0,"done":false,"created":0,"note":5}],"archive":[]}"#,
             r#"{"tasks":[{"id":"a","text":"","x":0,"y":0,"done":false,"created":0,"day":"2026-11-31"}],"archive":[]}"#,
             r#"{"tasks":[{"id":"a","text":"","x":0,"y":0,"done":false,"created":0,"day":"2025-02-29"}],"archive":[]}"#,
-            r#"{"tasks":[{"id":"a","text":"","x":0,"y":0,"done":false,"created":0,"day":"0000-02-29"}],"archive":[]}"#,
+            r#"{"tasks":[{"id":"a","text":"","x":0,"y":0,"done":false,"created":0,"day":"0000-02-30"}],"archive":[]}"#,
+            r#"{"tasks":[{"id":"a","text":"","x":0,"y":0,"done":false,"created":0,"day":"0100-02-29"}],"archive":[]}"#,
             r#"{"tasks":[{"id":"a","text":"","x":0,"y":0,"done":false,"created":0,"day":"2026-1-05"}],"archive":[]}"#,
             r#"{"tasks":[{"id":"a","text":"","x":0,"y":0,"done":false,"created":0,"day":"2026-11-05T00:00"}],"archive":[]}"#,
             r#"{"tasks":[{"id":"a","text":"","x":0,"y":0,"done":false,"created":0},{"id":"\u0061","text":"","x":1,"y":1,"done":true,"created":1}],"archive":[]}"#,
@@ -1329,6 +1328,8 @@ mod tests {
             r#"{"tasks":[{"id":"\ud800","text":"\udc00","x":0,"y":0,"done":false,"created":0},{"id":"\udc00","text":"","x":0,"y":0,"done":false,"created":0}],"archive":[]}"#,
             // also in an unknown key, which the app keeps; escaped known keys still match
             r#"{"\ud800":1,"tasks":[{"\u0069d":"a","text":"","x":0,"y":0,"done":false,"created":0,"\udc00":1}],"archive":[{"at":1,"tasks":[],"\ud800":1}],"projects":[{"id":"p","name":"P","\ud800":1}]}"#,
+            // year 0 is a leap year, as the schedule's dayDate counts it
+            r#"{"tasks":[{"id":"a","text":"","x":0,"y":0,"done":false,"created":0,"day":"0000-02-29"}],"archive":[]}"#,
         ] {
             write_sheet(&data, good.as_bytes()).unwrap();
             assert_eq!(fs::read_to_string(&data).unwrap(), good);
