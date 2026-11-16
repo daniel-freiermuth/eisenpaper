@@ -338,6 +338,19 @@ describe("Note drag versus click", () => {
     expect(store.selectedId).toBeNull();
   });
 
+  it("edits on Enter within a click's double-click window without selecting", () => {
+    // the click focuses the note; selecting would open the detail pane
+    // mid-edit and, on wide screens, slide the edited note from the caret
+    pointer(note(), "pointerdown", 100, 100);
+    pointer(note(), "pointerup", 100, 100);
+    press(note(), "Enter");
+    vi.advanceTimersByTime(500); // the click's double-click window ends
+    flushSync();
+
+    expect(store.editingId).toBe("t1");
+    expect(store.selectedId).toBeNull();
+  });
+
   it("moves the note from the threshold on and commits once on release", () => {
     pointer(note(), "pointerdown", 100, 100);
     pointer(note(), "pointermove", 106, 100); // exactly 6px

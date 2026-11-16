@@ -130,6 +130,7 @@
     if (editing || e.target !== e.currentTarget) return;
     if (e.key === "Enter") {
       e.preventDefault();
+      store.cancelSelect(); // a click just before focused the note
       store.startEdit(task);
     } else if (e.key === " ") {
       e.preventDefault();
